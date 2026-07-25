@@ -349,6 +349,10 @@ pub struct AppSettings {
     pub bindings: HashMap<String, ShortcutBinding>,
     #[serde(default = "default_push_to_talk")]
     pub push_to_talk: bool,
+    /// Push-to-talk only: double-tapping the transcribe shortcut latches
+    /// recording on until the shortcut is pressed again.
+    #[serde(default)]
+    pub ptt_double_tap_lock: bool,
     #[serde(default)]
     pub audio_feedback: bool,
     #[serde(default = "default_audio_feedback_volume")]
@@ -840,6 +844,7 @@ pub fn get_default_settings() -> AppSettings {
         settings_schema_version: default_settings_schema_version(),
         bindings,
         push_to_talk: default_push_to_talk(),
+        ptt_double_tap_lock: false,
         audio_feedback: false,
         audio_feedback_volume: default_audio_feedback_volume(),
         sound_theme: default_sound_theme(),

@@ -196,6 +196,10 @@
       "pushToTalk": {
         "label": "Push To Talk",
         "description": "Hold to record, release to stop"
+      },
+      "pttDoubleTapLock": {
+        "label": "Double Tap To Lock",
+        "description": "Double-tap the shortcut to keep recording hands-free; press it once more to stop"
       }
     },
     "models": {
