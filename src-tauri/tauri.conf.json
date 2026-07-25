@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Handy",
+  "productName": "Fancy Shmancy",
   "version": "0.9.4",
   "identifier": "com.pais.handy",
   "build": {
