@@ -578,7 +578,7 @@
     "checkingUpdates": "Checking for updates...",
     "updateAvailableShort": "Update available",
     "upToDate": "Up to date",
-    "updateCheckingDisabled": "Update Checking Disabled",
+    "updateCheckingDisabled": "Synced weekly from upstream",
     "downloading": "Downloading... {{progress}}%",
     "installing": "Installing...",
     "preparing": "Preparing...",
