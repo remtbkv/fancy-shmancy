@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.3" y2="1">
+      <stop offset="0" stop-color="#4A2D52"/>
+      <stop offset="0.5" stop-color="#2A1836"/>
+      <stop offset="1" stop-color="#130A19"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FBEEB8"/>
+      <stop offset="0.4" stop-color="#E0BE63"/>
+      <stop offset="1" stop-color="#A97F2B"/>
+    </linearGradient>
+    <linearGradient id="silk" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#35353F"/>
+      <stop offset="0.5" stop-color="#17171D"/>
+      <stop offset="1" stop-color="#0A0A0E"/>
+    </linearGradient>
+    <linearGradient id="cream" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFAEE"/>
+      <stop offset="1" stop-color="#E6D3AC"/>
+    </linearGradient>
+    <radialGradient id="glass" cx="0.32" cy="0.28" r="0.85">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.28"/>
+      <stop offset="0.7" stop-color="#FFFFFF" stop-opacity="0.07"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.02"/>
+    </radialGradient>
+
+    <!-- right half of the handlebar; the left half is this, mirrored -->
+    <path id="whisker"
+      d="M512 800
+         C 566 792 610 768 652 736
+         C 700 700 760 692 788 722
+         C 818 754 800 806 758 812
+         C 716 818 690 782 708 754
+         C 718 738 742 736 752 750
+         C 742 726 706 726 692 748
+         C 668 784 692 826 738 828
+         C 796 830 830 776 806 720
+         C 780 660 694 656 640 696
+         C 600 726 560 752 512 762 Z"/>
+  </defs>
+
+  <rect width="1024" height="1024" rx="232" ry="232" fill="url(#bg)"/>
+  <rect x="30" y="30" width="964" height="964" rx="206" ry="206" fill="none" stroke="url(#gold)" stroke-opacity="0.5" stroke-width="8"/>
+
+  <!-- top hat, tipped rakishly: brim, then crown, then the gold band on top -->
+  <g transform="rotate(-8 512 300)">
+    <ellipse cx="512" cy="330" rx="318" ry="56" fill="url(#silk)"/>
+    <ellipse cx="512" cy="322" rx="318" ry="56" fill="#14141A"/>
+    <path d="M334 322 L350 108 Q353 78 386 74 L638 74 Q671 78 674 108 L690 322 Q601 350 512 350 Q423 350 334 322 Z" fill="url(#silk)"/>
+    <path d="M342 232 Q512 276 682 232 L686 288 Q512 332 338 288 Z" fill="url(#gold)"/>
+    <path d="M350 108 Q356 86 384 82 L456 82 L446 250 Q394 238 344 222 Z" fill="#FFFFFF" fill-opacity="0.07"/>
+  </g>
+
+  <!-- monocle, dead centre -->
+  <g>
+    <circle cx="512" cy="548" r="150" fill="url(#glass)"/>
+    <circle cx="512" cy="548" r="150" fill="none" stroke="url(#gold)" stroke-width="26"/>
+    <circle cx="512" cy="548" r="126" fill="none" stroke="#0B0710" stroke-opacity="0.4" stroke-width="5"/>
+    <!-- chain, routed clear of the whiskers -->
+    <path d="M652 604 Q800 640 838 748 Q862 826 812 892" fill="none" stroke="url(#gold)" stroke-width="14"
+          stroke-linecap="round" stroke-dasharray="28 21"/>
+    <circle cx="800" cy="902" r="19" fill="url(#gold)"/>
+  </g>
+
+  <!-- extravagant handlebar mustache -->
+  <g fill="url(#cream)">
+    <use href="#whisker"/>
+    <use href="#whisker" transform="translate(1024,0) scale(-1,1)"/>
+    <ellipse cx="512" cy="782" rx="96" ry="40"/>
+  </g>
+</svg>
