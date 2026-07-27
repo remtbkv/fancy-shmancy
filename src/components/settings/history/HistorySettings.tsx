@@ -313,6 +313,7 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
 }) => {
   const { t, i18n } = useTranslation();
   const [showCopied, setShowCopied] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [retrying, setRetrying] = useState(false);
 
   const hasTranscription = entry.transcription_text.trim().length > 0;
@@ -322,20 +323,21 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
     [getAudioUrl, entry.file_name],
   );
 
-  // Resolve the file up front rather than on the first play. The element only
-  // preloads metadata, so this costs a header read per entry and is what makes
-  // the length show before you press play — otherwise every recording claims to
-  // be 0:00 until it is playing.
-  const [audioSrc, setAudioSrc] = useState<string | null>(null);
+  // The recording's length comes from the file header, not from an <audio>
+  // element. Loading the audio just to read its duration made every entry a
+  // media target: the play key would start one, and they auto-played.
+  const [durationSecs, setDurationSecs] = useState<number | null>(null);
   useEffect(() => {
     let current = true;
-    getAudioUrl(entry.file_name).then((url) => {
-      if (current) setAudioSrc(url);
+    commands.getAudioDurationSecs(entry.file_name).then((result) => {
+      if (current && result.status === "ok" && result.data !== null) {
+        setDurationSecs(result.data);
+      }
     });
     return () => {
       current = false;
     };
-  }, [getAudioUrl, entry.file_name]);
+  }, [entry.file_name]);
 
   const handleCopyText = () => {
     if (!hasTranscription) {
@@ -434,7 +436,7 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
             : hasTranscription
               ? "text-text/90 select-text cursor-text whitespace-pre-wrap break-words"
               : "text-text/40"
-        }`}
+        } ${!retrying && hasTranscription && !expanded ? "line-clamp-[10]" : ""}`}
         style={
           retrying
             ? { animation: "transcribe-pulse 3s ease-in-out infinite" }
@@ -456,9 +458,21 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
             : t("settings.history.transcriptionFailed")}
       </p>
 
+      {/* A long dictation would otherwise push every other entry off the page. */}
+      {!retrying && hasTranscription && entry.transcription_text.length > 420 && (
+        <button
+          onClick={() => setExpanded((open) => !open)}
+          className="text-xs text-logo-primary/90 hover:text-logo-primary pb-2 cursor-pointer"
+        >
+          {expanded
+            ? t("settings.history.showLess")
+            : t("settings.history.showMore")}
+        </button>
+      )}
+
       <AudioPlayer
-        src={audioSrc ?? undefined}
         onLoadRequest={handleLoadAudio}
+        knownDuration={durationSecs ?? undefined}
         className="w-full"
       />
     </div>

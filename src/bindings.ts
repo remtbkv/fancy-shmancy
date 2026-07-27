@@ -821,6 +821,14 @@ async getAudioFilePath(fileName: string) : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async getAudioDurationSecs(fileName: string) : Promise<Result<number | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_audio_duration_secs", { fileName }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async deleteHistoryEntry(id: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("delete_history_entry", { id }) };

@@ -46,6 +46,29 @@ pub async fn get_audio_file_path(
         .map(|s| s.to_string())
 }
 
+/// Length of a recording, read from the WAV header. The history list used to
+/// get this by loading the audio itself, which made every entry a media target
+/// the play key could hijack.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_audio_duration_secs(
+    _app: AppHandle,
+    history_manager: State<'_, Arc<HistoryManager>>,
+    file_name: String,
+) -> Result<Option<f64>, String> {
+    let path = history_manager.get_audio_file_path(&file_name);
+    let Ok(reader) = hound::WavReader::open(&path) else {
+        return Ok(None);
+    };
+    let spec = reader.spec();
+    if spec.sample_rate == 0 || spec.channels == 0 {
+        return Ok(None);
+    }
+    Ok(Some(
+        reader.duration() as f64 / spec.sample_rate as f64,
+    ))
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_history_entry(

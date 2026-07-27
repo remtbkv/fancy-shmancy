@@ -115,20 +115,20 @@ pub fn send_paste_shift_insert(enigo: &mut Enigo) -> Result<(), String> {
 /// Pastes text directly using the enigo text method.
 /// This tries to use system input methods if possible, otherwise simulates keystrokes one by one.
 pub fn paste_text_direct(enigo: &mut Enigo, text: &str) -> Result<(), String> {
-    // Typed in small chunks rather than one call. Handing a long transcript to
-    // the OS as a single synthetic event makes some apps drop or reorder
-    // characters, and pacing it also gives the "typed out" look instead of text
-    // materialising all at once.
-    const CHUNK_CHARS: usize = 12;
-    const CHUNK_PAUSE: std::time::Duration = std::time::Duration::from_millis(6);
+    let chunk_chars = typing_chunk_size(text);
 
-    for (index, line) in text.replace("\r\n", "\n").replace('\r', "\n").split('\n').enumerate() {
+    for (index, line) in text
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .split('\n')
+        .enumerate()
+    {
         if index > 0 {
             send_soft_newline(enigo)?;
         }
 
         let chars: Vec<char> = line.chars().collect();
-        for (position, chunk) in chars.chunks(CHUNK_CHARS).enumerate() {
+        for (position, chunk) in chars.chunks(chunk_chars).enumerate() {
             if position > 0 {
                 std::thread::sleep(CHUNK_PAUSE);
             }
@@ -140,6 +140,22 @@ pub fn paste_text_direct(enigo: &mut Enigo, text: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+const CHUNK_PAUSE: std::time::Duration = std::time::Duration::from_millis(6);
+/// Small enough that a chunk is never a visible block of text arriving at once —
+/// well under one terminal line, so it still reads as typing rather than a paste.
+const MAX_CHUNK_CHARS: usize = 48;
+const MIN_CHUNK_CHARS: usize = 12;
+
+/// How much text to send per keystroke event, scaled to the size of the
+/// transcript. A dictated sentence and a three-minute ramble should take about
+/// the same time to land: chunking a long one at the short-message rate would
+/// drag on for seconds, and the point of typing it out is that the text stays
+/// editable, not that it looks hand-typed.
+fn typing_chunk_size(text: &str) -> usize {
+    let total = text.chars().count();
+    (total / 30).clamp(MIN_CHUNK_CHARS, MAX_CHUNK_CHARS)
 }
 
 /// Shift+Return: a line break in editors and chat inputs that treat a bare
@@ -157,4 +173,37 @@ fn send_soft_newline(enigo: &mut Enigo) -> Result<(), String> {
         .key(Key::Shift, enigo::Direction::Release)
         .map_err(|e| format!("Failed to release Shift: {}", e))?;
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_transcripts_type_at_the_slow_end() {
+        assert_eq!(typing_chunk_size("hello there"), MIN_CHUNK_CHARS);
+        assert_eq!(typing_chunk_size(&"a".repeat(200)), MIN_CHUNK_CHARS);
+    }
+
+    #[test]
+    fn the_rate_climbs_with_length_then_stops() {
+        assert_eq!(typing_chunk_size(&"a".repeat(900)), 30);
+        assert_eq!(typing_chunk_size(&"a".repeat(1_440)), MAX_CHUNK_CHARS);
+        // A five-minute ramble is capped at the same size as a long paragraph:
+        // beyond this a chunk starts looking like pasted text.
+        assert_eq!(typing_chunk_size(&"a".repeat(50_000)), MAX_CHUNK_CHARS);
+    }
+
+    /// Whatever the size, the whole transcript lands: no piece is dropped and
+    /// the ordering is the text's own.
+    #[test]
+    fn chunking_covers_the_text_exactly() {
+        for len in [1usize, 11, 12, 13, 500, 1_500] {
+            let text: String = (0..len).map(|i| char::from(b'a' + (i % 26) as u8)).collect();
+            let size = typing_chunk_size(&text);
+            let chars: Vec<char> = text.chars().collect();
+            let rejoined: String = chars.chunks(size).flat_map(|c| c.iter()).collect();
+            assert_eq!(rejoined, text, "length {len}");
+        }
+    }
 }

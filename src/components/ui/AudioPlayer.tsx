@@ -14,6 +14,8 @@ interface AudioPlayerProps {
   src?: string;
   /** Called when play is clicked and no src is loaded yet. Should return the audio URL. */
   onLoadRequest?: () => Promise<string | null>;
+  /** Length in seconds, when the caller can supply it without loading the audio. */
+  knownDuration?: number;
   className?: string;
   autoPlay?: boolean;
 }
@@ -43,6 +45,23 @@ export const AudioPlayerGroup: React.FC<React.PropsWithChildren> = ({
     [],
   );
 
+  useEffect(() => {
+    const stopEverything = () => {
+      activeAudioRef.current?.pause();
+      activeAudioRef.current = null;
+    };
+    // Leaving the tab, hiding the window, or quitting should all silence it —
+    // audio playing on from a view you have closed is just noise.
+    window.addEventListener("pagehide", stopEverything);
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) stopEverything();
+    });
+    return () => {
+      stopEverything();
+      window.removeEventListener("pagehide", stopEverything);
+    };
+  }, []);
+
   return (
     <AudioPlayerGroupContext.Provider value={value}>
       {children}
@@ -53,12 +72,13 @@ export const AudioPlayerGroup: React.FC<React.PropsWithChildren> = ({
 export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   src: initialSrc,
   onLoadRequest,
+  knownDuration,
   className = "",
   autoPlay = false,
 }) => {
   const group = useContext(AudioPlayerGroupContext);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [duration, setDuration] = useState(0);
+  const [duration, setDuration] = useState(knownDuration ?? 0);
   const [currentTime, setCurrentTime] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const [loadedSrc, setLoadedSrc] = useState<string | null>(initialSrc ?? null);
@@ -172,13 +192,9 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     };
   }, [group]);
 
-  // The src prop can resolve after mount; without this the player keeps the
-  // null it started with, which is how every history entry reported 0:00.
   useEffect(() => {
-    if (!initialSrc || initialSrc === loadedSrc) return;
-    prevLoadedSrc.current = initialSrc;
-    setLoadedSrc(initialSrc);
-  }, [initialSrc, loadedSrc]);
+    if (knownDuration && knownDuration > 0) setDuration(knownDuration);
+  }, [knownDuration]);
 
   // Auto-play when src becomes available (via onLoadRequest or autoPlay prop)
   useEffect(() => {
