@@ -15,9 +15,14 @@ const RELEASE_GRACE: Duration = Duration::from_millis(50);
 const TAP_MAX_HOLD: Duration = Duration::from_millis(350);
 /// How long after a tap-length release a second press still counts as a double tap.
 const DOUBLE_TAP_WINDOW: Duration = Duration::from_millis(400);
-/// Presses arriving sooner than this after a release are key auto-repeat
-/// (X11 synthesises release/press pairs a few ms apart), not a human double tap.
-const MIN_TAP_GAP: Duration = Duration::from_millis(40);
+/// Presses arriving sooner than this after a release are key auto-repeat, not a
+/// human double tap. X11 emits each repeat as a release immediately followed by
+/// a press — a sub-millisecond gap — while even a snapped-out double tap leaves
+/// tens of milliseconds between letting go and pressing again. The threshold
+/// only has to separate those two, so it sits just above the noise: at 40ms it
+/// swallowed genuinely fast double taps, which then ran as one short recording
+/// and went straight to transcribing.
+const MIN_TAP_GAP: Duration = Duration::from_millis(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PttAction {
@@ -263,6 +268,16 @@ impl TranscriptionCoordinator {
                                 recording_binding.as_deref(),
                             ) {
                                 PttAction::CancelRelease => {
+                                    if lock_enabled {
+                                        // Worth seeing: this is the path a
+                                        // double tap falls into when its two
+                                        // taps land close enough to look like
+                                        // auto-repeat, which keeps it from
+                                        // latching.
+                                        debug!(
+                                            "Press for '{binding_id}' absorbed as key repeat, not a double tap"
+                                        );
+                                    }
                                     pending_release = None;
                                     continue;
                                 }
@@ -716,6 +731,24 @@ mod tests {
                 Some((BINDING, Duration::from_millis(5)))
             ),
             LockAction::None
+        );
+    }
+
+    /// A double tap snapped out as fast as a human can manage still has tens of
+    /// milliseconds between the two taps, and must latch rather than being
+    /// written off as key repeat.
+    #[test]
+    fn a_very_fast_double_tap_still_engages() {
+        assert_eq!(
+            classify_lock_event(
+                true,
+                false,
+                true,
+                BINDING,
+                Some(BINDING),
+                Some((BINDING, Duration::from_millis(25)))
+            ),
+            LockAction::Engage
         );
     }
 
