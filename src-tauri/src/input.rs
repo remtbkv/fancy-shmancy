@@ -115,9 +115,46 @@ pub fn send_paste_shift_insert(enigo: &mut Enigo) -> Result<(), String> {
 /// Pastes text directly using the enigo text method.
 /// This tries to use system input methods if possible, otherwise simulates keystrokes one by one.
 pub fn paste_text_direct(enigo: &mut Enigo, text: &str) -> Result<(), String> {
-    enigo
-        .text(text)
-        .map_err(|e| format!("Failed to send text directly: {}", e))?;
+    // Typed in small chunks rather than one call. Handing a long transcript to
+    // the OS as a single synthetic event makes some apps drop or reorder
+    // characters, and pacing it also gives the "typed out" look instead of text
+    // materialising all at once.
+    const CHUNK_CHARS: usize = 12;
+    const CHUNK_PAUSE: std::time::Duration = std::time::Duration::from_millis(6);
+
+    for (index, line) in text.replace("\r\n", "\n").replace('\r', "\n").split('\n').enumerate() {
+        if index > 0 {
+            send_soft_newline(enigo)?;
+        }
+
+        let chars: Vec<char> = line.chars().collect();
+        for (position, chunk) in chars.chunks(CHUNK_CHARS).enumerate() {
+            if position > 0 {
+                std::thread::sleep(CHUNK_PAUSE);
+            }
+            let piece: String = chunk.iter().collect();
+            enigo
+                .text(&piece)
+                .map_err(|e| format!("Failed to send text directly: {}", e))?;
+        }
+    }
 
     Ok(())
+}
+
+/// Shift+Return: a line break in editors and chat inputs that treat a bare
+/// Return as "send", and indistinguishable from Return everywhere else. A
+/// transcript that happens to contain a newline should never fire off a
+/// half-finished message.
+fn send_soft_newline(enigo: &mut Enigo) -> Result<(), String> {
+    enigo
+        .key(Key::Shift, enigo::Direction::Press)
+        .map_err(|e| format!("Failed to press Shift: {}", e))?;
+    let result = enigo
+        .key(Key::Return, enigo::Direction::Click)
+        .map_err(|e| format!("Failed to send Return: {}", e));
+    enigo
+        .key(Key::Shift, enigo::Direction::Release)
+        .map_err(|e| format!("Failed to release Shift: {}", e))?;
+    result
 }

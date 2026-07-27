@@ -277,8 +277,6 @@ fn initialize_core_logic(app_handle: &AppHandle) {
                 }
             }
             "cancel" => {
-                use crate::utils::cancel_current_operation;
-
                 // Use centralized cancellation that handles all operations
                 crate::utils::cancel_current_operation_from(app, "tray menu");
             }

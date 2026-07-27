@@ -305,12 +305,12 @@
       },
       "pasteMethod": {
         "title": "Paste Method",
-        "description": "Choose how text is inserted. Direct: simulates typing via system input. None: skips paste, only updates history/clipboard.",
+        "description": "Choose how text is inserted. Typed: types the transcript out, which keeps it editable in terminal apps that turn a paste into a read-only block. None: skips paste, only updates history/clipboard.",
         "options": {
           "clipboard": "Clipboard ({{modifier}}+V)",
           "clipboardCtrlShiftV": "Clipboard (Ctrl+Shift+V)",
           "clipboardShiftInsert": "Clipboard (Shift+Insert)",
-          "direct": "Direct",
+          "direct": "Typed (keeps text editable)",
           "none": "None",
           "externalScript": "External Script"
         },

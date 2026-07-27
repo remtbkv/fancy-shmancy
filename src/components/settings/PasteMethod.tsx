@@ -33,15 +33,10 @@ export const PasteMethodSetting: React.FC<PasteMethodProps> = React.memo(
         },
       ];
 
-      // Direct input is not offered on macOS, but keep an existing/manual
-      // selection visible so the UI accurately represents the saved setting.
-      if (osType !== "macos" || selectedMethod === "direct") {
-        options.push({
-          value: "direct",
-          label: t("settings.advanced.pasteMethod.options.direct"),
-          disabled: osType === "macos",
-        });
-      }
+      options.push({
+        value: "direct",
+        label: t("settings.advanced.pasteMethod.options.direct"),
+      });
 
       options.push({
         value: "none",
