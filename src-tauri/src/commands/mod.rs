@@ -11,7 +11,7 @@ use tauri_plugin_opener::OpenerExt;
 #[tauri::command]
 #[specta::specta]
 pub fn cancel_operation(app: AppHandle) {
-    cancel_current_operation(&app);
+    crate::utils::cancel_current_operation_from(&app, "app window");
 }
 
 #[tauri::command]
