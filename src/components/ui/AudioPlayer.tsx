@@ -65,6 +65,9 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   const [isLoading, setIsLoading] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement>(null);
+  // What the player already knows about, so a src that arrives after mount is
+  // not mistaken for the user asking to play.
+  const prevLoadedSrc = useRef<string | null>(initialSrc ?? null);
   const src = loadedSrc;
   const animationRef = useRef<number>();
   const dragTimeRef = useRef<number>(0);
@@ -169,8 +172,15 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     };
   }, [group]);
 
+  // The src prop can resolve after mount; without this the player keeps the
+  // null it started with, which is how every history entry reported 0:00.
+  useEffect(() => {
+    if (!initialSrc || initialSrc === loadedSrc) return;
+    prevLoadedSrc.current = initialSrc;
+    setLoadedSrc(initialSrc);
+  }, [initialSrc, loadedSrc]);
+
   // Auto-play when src becomes available (via onLoadRequest or autoPlay prop)
-  const prevLoadedSrc = useRef<string | null>(null);
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
