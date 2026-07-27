@@ -235,15 +235,12 @@ impl TranscriptionCoordinator {
                                     pending_release = None;
                                     locked = true;
                                     debug!("Double tap latched recording for '{binding_id}'");
-                                    // A latched session is hands-free and can run
-                                    // for minutes while the user keeps working, so
-                                    // Handy must stop holding the cancel key
-                                    // hostage: bare Escape is blocked from other
-                                    // apps while it is registered, and one stray
-                                    // press would silently discard the recording.
-                                    // Press the shortcut again to stop and
-                                    // transcribe.
-                                    crate::shortcut::unregister_cancel_shortcut(&app);
+                                    // The cancel key stays registered here. It is
+                                    // held for the whole latched session, which
+                                    // does mean Escape is blocked from other apps
+                                    // while dictating — worth it, because being
+                                    // able to throw away a hands-free recording
+                                    // matters more than passing Escape through.
                                     continue;
                                 }
                                 LockAction::Stop => {

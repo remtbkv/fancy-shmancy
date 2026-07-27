@@ -122,8 +122,17 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     const audio = audioRef.current;
     if (!audio) return;
 
+    const readDuration = () => {
+      // WebKit reports Infinity (and briefly NaN) for a source whose length it
+      // has not worked out yet; taking those would leave the player stuck at
+      // 0:00 for a recording that plays perfectly well.
+      if (Number.isFinite(audio.duration) && audio.duration > 0) {
+        setDuration(audio.duration);
+      }
+    };
+
     const handleLoadedMetadata = () => {
-      setDuration(audio.duration || 0);
+      readDuration();
       setCurrentTime(0);
     };
 
@@ -143,6 +152,8 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     };
 
     audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+    audio.addEventListener("durationchange", readDuration);
+    audio.addEventListener("canplay", readDuration);
     audio.addEventListener("ended", handleEnded);
     audio.addEventListener("play", handlePlay);
     audio.addEventListener("pause", handlePause);
@@ -150,6 +161,8 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     return () => {
       group?.releasePlayback(audio);
       audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      audio.removeEventListener("durationchange", readDuration);
+      audio.removeEventListener("canplay", readDuration);
       audio.removeEventListener("ended", handleEnded);
       audio.removeEventListener("play", handlePlay);
       audio.removeEventListener("pause", handlePause);

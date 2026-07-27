@@ -1109,7 +1109,56 @@ impl TranscriptionManager {
         .emit(&self.app_handle);
     }
 
+    /// Longest audio a short-window model is fed in one go. Canary is trained on
+    /// clips of about half a minute and answers anything longer with an empty
+    /// string — no error, no partial text, just silence — so a minute of speech
+    /// came back as "transcription failed". Measured on this machine: 26.9s
+    /// transcribed fine, 30.7s and 54.4s both returned nothing.
+    const SHORT_FORM_WINDOW_SECS: usize = 24;
+    const SAMPLE_RATE: usize = 16_000;
+
+    /// The sample count past which the loaded model needs its audio split up,
+    /// or `None` when the engine handles long recordings itself (whisper walks
+    /// its own 30s windows).
+    fn short_form_window(&self) -> Option<usize> {
+        let guard = self.lock_engine();
+        let arch = match guard.as_ref()? {
+            LoadedEngine::TranscribeCpp(session) => session.model().arch().to_string(),
+            _ => return None,
+        };
+        drop(guard);
+
+        arch.contains("canary")
+            .then_some(Self::SHORT_FORM_WINDOW_SECS * Self::SAMPLE_RATE)
+    }
+
     pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
+        if let Some(window) = self.short_form_window() {
+            if audio.len() > window {
+                let pieces = split_audio_on_quiet(&audio, window);
+                info!(
+                    "Audio is {:.1}s, longer than this model's {}s window — transcribing it in {} pieces",
+                    audio.len() as f32 / Self::SAMPLE_RATE as f32,
+                    Self::SHORT_FORM_WINDOW_SECS,
+                    pieces.len()
+                );
+
+                let mut parts: Vec<String> = Vec::new();
+                for piece in pieces {
+                    let text = self.transcribe_once(piece)?;
+                    let text = text.trim();
+                    if !text.is_empty() {
+                        parts.push(text.to_string());
+                    }
+                }
+                return Ok(parts.join(" "));
+            }
+        }
+
+        self.transcribe_once(audio)
+    }
+
+    fn transcribe_once(&self, audio: Vec<f32>) -> Result<String> {
         #[cfg(debug_assertions)]
         if std::env::var("HANDY_FORCE_TRANSCRIPTION_FAILURE").is_ok() {
             return Err(anyhow::anyhow!(
@@ -1967,12 +2016,108 @@ pub fn get_available_accelerators() -> AvailableAccelerators {
     }
 }
 
+/// Cut `audio` into pieces no longer than `max_len`, preferring the quietest
+/// spot near the end of each piece so the seam falls in a pause rather than
+/// mid-word. Every sample is kept exactly once: the pieces concatenate back to
+/// the original.
+fn split_audio_on_quiet(audio: &[f32], max_len: usize) -> Vec<Vec<f32>> {
+    /// 20ms at 16kHz — short enough to land inside a natural pause.
+    const FRAME: usize = 320;
+
+    if max_len == 0 || audio.len() <= max_len {
+        return vec![audio.to_vec()];
+    }
+
+    // How far back from the hard limit to hunt for a pause. A fifth of the
+    // window is long enough to reach a gap between sentences without making the
+    // pieces meaningfully shorter than they could be.
+    let search = (max_len / 5).max(FRAME);
+
+    let mut pieces = Vec::new();
+    let mut start = 0;
+
+    while audio.len() - start > max_len {
+        let hard_end = start + max_len;
+        let search_start = hard_end.saturating_sub(search).max(start + FRAME);
+
+        let mut cut = hard_end;
+        let mut quietest = f32::MAX;
+        let mut frame_start = search_start;
+        while frame_start + FRAME <= hard_end {
+            let energy: f32 = audio[frame_start..frame_start + FRAME]
+                .iter()
+                .map(|sample| sample * sample)
+                .sum();
+            if energy < quietest {
+                quietest = energy;
+                cut = frame_start + FRAME / 2;
+            }
+            frame_start += FRAME;
+        }
+
+        pieces.push(audio[start..cut].to_vec());
+        start = cut;
+    }
+
+    if start < audio.len() {
+        pieces.push(audio[start..].to_vec());
+    }
+
+    pieces
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn languages(codes: &[&str]) -> Vec<String> {
         codes.iter().map(|code| (*code).to_string()).collect()
+    }
+
+    #[test]
+    fn audio_within_the_window_is_left_alone() {
+        let audio = vec![0.5f32; 1_000];
+        let pieces = split_audio_on_quiet(&audio, 1_000);
+        assert_eq!(pieces.len(), 1);
+        assert_eq!(pieces[0], audio);
+    }
+
+    #[test]
+    fn long_audio_splits_into_windows_without_losing_a_sample() {
+        // 2.5 windows of continuous sound: nothing quiet to aim for, so the cuts
+        // land at the limit itself.
+        let audio: Vec<f32> = (0..25_000).map(|i| (i as f32 * 0.001).sin()).collect();
+        let pieces = split_audio_on_quiet(&audio, 10_000);
+
+        assert_eq!(pieces.len(), 3);
+        assert!(pieces.iter().all(|piece| piece.len() <= 10_000));
+        let rejoined: Vec<f32> = pieces.concat();
+        assert_eq!(rejoined, audio, "splitting must not drop or duplicate audio");
+    }
+
+    /// The point of aiming at quiet: a seam through the middle of a word costs a
+    /// word, and this is exactly the case chunking exists to serve.
+    #[test]
+    fn the_cut_lands_in_the_pause() {
+        let mut audio = vec![0.4f32; 20_000];
+        // A half-second of near-silence sitting inside the search window.
+        let gap = 8_400..16_400;
+        for sample in &mut audio[gap.clone()] {
+            *sample = 0.0;
+        }
+
+        let pieces = split_audio_on_quiet(&audio, 10_000);
+        let cut = pieces[0].len();
+        assert!(
+            gap.contains(&cut),
+            "expected the cut inside the silent gap {gap:?}, got {cut}"
+        );
+    }
+
+    #[test]
+    fn a_window_of_zero_is_not_a_division_by_zero() {
+        let audio = vec![0.1f32; 100];
+        assert_eq!(split_audio_on_quiet(&audio, 0), vec![audio]);
     }
 
     #[test]

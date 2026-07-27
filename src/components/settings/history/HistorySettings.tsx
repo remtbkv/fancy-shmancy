@@ -322,6 +322,21 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
     [getAudioUrl, entry.file_name],
   );
 
+  // Resolve the file up front rather than on the first play. The element only
+  // preloads metadata, so this costs a header read per entry and is what makes
+  // the length show before you press play — otherwise every recording claims to
+  // be 0:00 until it is playing.
+  const [audioSrc, setAudioSrc] = useState<string | null>(null);
+  useEffect(() => {
+    let current = true;
+    getAudioUrl(entry.file_name).then((url) => {
+      if (current) setAudioSrc(url);
+    });
+    return () => {
+      current = false;
+    };
+  }, [getAudioUrl, entry.file_name]);
+
   const handleCopyText = () => {
     if (!hasTranscription) {
       return;
@@ -441,7 +456,11 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
             : t("settings.history.transcriptionFailed")}
       </p>
 
-      <AudioPlayer onLoadRequest={handleLoadAudio} className="w-full" />
+      <AudioPlayer
+        src={audioSrc ?? undefined}
+        onLoadRequest={handleLoadAudio}
+        className="w-full"
+      />
     </div>
   );
 };
