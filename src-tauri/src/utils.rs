@@ -99,6 +99,9 @@ pub fn cancel_current_operation_from(app: &AppHandle, source: &str) {
     // the only place its paused playback gets started again.
     media_control::resume_after_recording();
 
+    // Anything already transcribed for this recording is thrown away with it.
+    tm.abandon_ahead_of_stop();
+
     // Update tray icon and hide overlay
     change_tray_icon(app, crate::tray::TrayIconState::Idle);
     hide_recording_overlay(app);

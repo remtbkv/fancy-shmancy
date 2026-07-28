@@ -53,6 +53,13 @@ pub struct CliArgs {
     #[arg(long)]
     pub list_models: bool,
 
+    /// Feed the WAV through the live recording path first, so the pieces a
+    /// short-window model needs are transcribed while the "recording" is still
+    /// going — the same thing that happens when you talk. Replays at 20x real
+    /// time. Without this, --transcribe-file only exercises the batch path.
+    #[arg(long)]
+    pub live: bool,
+
     /// Repeat the transcription N times (best_ms reports the fastest run).
     #[arg(long, value_name = "N")]
     pub repeat: Option<usize>,

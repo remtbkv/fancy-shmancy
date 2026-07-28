@@ -586,6 +586,9 @@ impl ShortcutAction for TranscribeAction {
             // nothing to protect, and silencing the user's music for it would be
             // a mystery.
             media_control::pause_for_recording(app);
+            // Windows of this recording get transcribed as they complete, so
+            // the key coming up only leaves the last one to do.
+            tm.begin_ahead_of_stop();
             // Dynamically register the cancel shortcut in a separate task to avoid deadlock
             shortcut::register_cancel_shortcut(app);
         } else {

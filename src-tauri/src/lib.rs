@@ -163,8 +163,12 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             .expect("Failed to initialize transcription manager"),
     );
     let recording_manager = Arc::new(
-        AudioRecordingManager::new(app_handle, transcription_manager.stream_router())
-            .expect("Failed to initialize recording manager"),
+        AudioRecordingManager::new(
+            app_handle,
+            transcription_manager.stream_router(),
+            transcription_manager.ahead_of_stop(),
+        )
+        .expect("Failed to initialize recording manager"),
     );
     let history_manager =
         Arc::new(HistoryManager::new(app_handle).expect("Failed to initialize history manager"));
@@ -541,6 +545,9 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
                 return 1;
             }
         }
+        if args.live {
+            replay_as_recorded(&tm, &samples);
+        }
         let t = Instant::now();
         match tm.transcribe(samples.clone()) {
             Ok(out) => text = out,
@@ -587,6 +594,24 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
         println!("text: {}", text);
     }
     0
+}
+
+/// Hand `samples` to the transcription manager the way the microphone does:
+/// 30ms frames, in order, while the recording is notionally still running. Runs
+/// at 20x real time — fast enough that a two-minute file replays in seconds,
+/// slow enough that the ahead-of-stop worker stays ahead of the feed exactly as
+/// it does live.
+fn replay_as_recorded(tm: &Arc<TranscriptionManager>, samples: &[f32]) {
+    use std::time::Duration;
+
+    const FRAME: usize = 480; // 30ms at 16 kHz, the recorder's frame size
+    const PACE: Duration = Duration::from_micros(30_000 / 20);
+
+    tm.begin_ahead_of_stop();
+    for frame in samples.chunks(FRAME) {
+        tm.ahead_of_stop().feed(frame);
+        std::thread::sleep(PACE);
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

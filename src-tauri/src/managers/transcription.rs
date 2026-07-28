@@ -166,6 +166,158 @@ impl StreamRouter {
     }
 }
 
+/// Transcribes the finished pieces of a long recording while it is still
+/// running, so letting go of the key leaves only the last piece to do.
+///
+/// Only the models that need their audio cut up at all take this path (see
+/// [`SHORT_FORM_WINDOWS`]); everything else is transcribed in one go at the end
+/// as before. The recorder hands its audio callback exactly the frames it is
+/// accumulating — same slices, same order, after the same VAD gating — so what
+/// this sees is always a prefix of what `stop_recording` finally returns, and
+/// [`cut_point`] looks only backwards, so the seams are the ones a batch split
+/// would have chosen anyway. That is what makes the result identical to doing
+/// the work at the end: the only thing that moves is when it happens.
+pub struct AheadOfStop {
+    /// Checked by the audio callback before it touches the mutex.
+    open: AtomicBool,
+    state: Mutex<AheadState>,
+    /// Wakes the worker when audio arrives, and the stopping side when a piece
+    /// lands.
+    change: Condvar,
+}
+
+#[derive(Default)]
+struct AheadState {
+    /// Bumped per recording. A piece that finishes under a stale generation
+    /// belongs to a recording that was cancelled, and is thrown away.
+    generation: u64,
+    /// Audio captured since the last cut.
+    pending: Vec<f32>,
+    /// How much of the recording is already accounted for in `texts`. Indexes
+    /// into the final sample buffer.
+    done: usize,
+    texts: Vec<String>,
+    /// True while the worker holds a piece.
+    working: bool,
+    /// A piece was lost (the model errored, or the loaded model turned out not
+    /// to need splitting). The run is unusable; the whole recording gets
+    /// transcribed at the end instead.
+    spoiled: bool,
+}
+
+impl AheadOfStop {
+    fn new() -> Self {
+        Self {
+            open: AtomicBool::new(false),
+            state: Mutex::new(AheadState::default()),
+            change: Condvar::new(),
+        }
+    }
+
+    /// Forward a 16 kHz frame. Cheap no-op (one relaxed atomic load) when no
+    /// recording is being worked ahead.
+    pub fn feed(&self, frame: &[f32]) {
+        if !self.open.load(Ordering::Relaxed) {
+            return;
+        }
+        let mut state = self.state.lock().unwrap();
+        state.pending.extend_from_slice(frame);
+        drop(state);
+        self.change.notify_all();
+    }
+
+    /// Start working ahead for a fresh recording.
+    fn begin(&self) {
+        self.reset();
+        self.open.store(true, Ordering::Relaxed);
+    }
+
+    /// Stop working ahead and throw away what we have — the recording was
+    /// cancelled, or the loaded model doesn't want its audio split.
+    fn abandon(&self) {
+        self.open.store(false, Ordering::Relaxed);
+        self.reset();
+    }
+
+    fn reset(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.generation = state.generation.wrapping_add(1);
+        state.pending = Vec::new();
+        state.done = 0;
+        state.texts = Vec::new();
+        state.spoiled = false;
+        drop(state);
+        self.change.notify_all();
+    }
+
+    /// Take the next full piece, if there is one. Returns with the lock
+    /// released so the model call doesn't block the audio callback.
+    fn claim(&self, window: usize) -> Option<(u64, Vec<f32>)> {
+        let mut state = self.state.lock().unwrap();
+        if !self.open.load(Ordering::Relaxed) || state.spoiled || state.pending.len() <= window {
+            return None;
+        }
+        let cut = cut_point(&state.pending, window);
+        let piece: Vec<f32> = state.pending.drain(..cut).collect();
+        state.working = true;
+        Some((state.generation, piece))
+    }
+
+    fn deliver(&self, generation: u64, samples: usize, text: String) {
+        let mut state = self.state.lock().unwrap();
+        state.working = false;
+        if state.generation == generation && !state.spoiled {
+            state.done += samples;
+            let text = text.trim();
+            if !text.is_empty() {
+                state.texts.push(text.to_string());
+            }
+        }
+        drop(state);
+        self.change.notify_all();
+    }
+
+    /// A claimed piece never made it into `texts`, so the run can no longer
+    /// account for the whole recording.
+    fn spoil(&self, generation: u64) {
+        let mut state = self.state.lock().unwrap();
+        state.working = false;
+        if state.generation == generation {
+            state.spoiled = true;
+        }
+        drop(state);
+        self.change.notify_all();
+    }
+
+    /// Close the run and hand back what was transcribed: how many samples of
+    /// the recording it covers, and the text for them. `None` when there is
+    /// nothing usable and the caller should transcribe the whole recording.
+    fn finish(&self) -> Option<(usize, Vec<String>)> {
+        self.open.store(false, Ordering::Relaxed);
+        let mut state = self.state.lock().unwrap();
+        // A piece claimed just before the key came up is still worth waiting
+        // for — it is work the batch path would have had to do anyway.
+        while state.working {
+            state = self.change.wait(state).unwrap();
+        }
+        if state.spoiled || state.done == 0 {
+            return None;
+        }
+        Some((state.done, std::mem::take(&mut state.texts)))
+    }
+}
+
+/// What the loaded model needs done with a long recording.
+enum ModelWindow {
+    /// Cut it into pieces this many samples long.
+    Split(usize),
+    /// Hand it over whole; the engine walks its own windows.
+    WholeRecording,
+    /// Nothing to ask — no model loaded, or another transcription has the
+    /// engine out of the mutex right now.
+    NoModelLoaded,
+}
+
 enum LoadedEngine {
     /// Whisper-family models (whisper, breeze-asr, custom .bin/.gguf) via
     /// transcribe-cpp. Holds the live `Session`, which keeps its `Model` alive
@@ -267,6 +419,8 @@ pub struct TranscriptionManager {
     /// `is_model_loaded()` consults this so the model still reports "loaded"
     /// while the worker holds it.
     active_engine_lease: Arc<AtomicU64>,
+    /// Pieces of the current recording transcribed while it is still running.
+    ahead: Arc<AheadOfStop>,
 }
 
 impl TranscriptionManager {
@@ -287,7 +441,15 @@ impl TranscriptionManager {
             next_stream_worker_id: Arc::new(AtomicU64::new(1)),
             active_stream_worker: Arc::new(AtomicU64::new(0)),
             active_engine_lease: Arc::new(AtomicU64::new(0)),
+            ahead: Arc::new(AheadOfStop::new()),
         };
+
+        // Transcribe each window of a long recording as soon as it is complete,
+        // rather than all of them once the key comes up.
+        {
+            let manager = manager.clone();
+            thread::spawn(move || manager.work_ahead_of_stop());
+        }
 
         // Start the idle watcher
         {
@@ -1113,42 +1275,154 @@ impl TranscriptionManager {
 
     /// The sample count past which the loaded model needs its audio split up,
     /// or `None` when the engine handles long recordings itself (whisper walks
-    /// its own 30s windows).
+    /// its own 30s windows) — or when there is no engine to ask, which callers
+    /// that can't tell the two apart treat the same way.
     fn short_form_window(&self) -> Option<usize> {
+        match self.model_window() {
+            ModelWindow::Split(window) => Some(window),
+            ModelWindow::WholeRecording | ModelWindow::NoModelLoaded => None,
+        }
+    }
+
+    fn model_window(&self) -> ModelWindow {
         let guard = self.lock_engine();
-        let arch = match guard.as_ref()? {
-            LoadedEngine::TranscribeCpp(session) => session.model().arch().to_string(),
-            _ => return None,
+        let arch = match guard.as_ref() {
+            Some(LoadedEngine::TranscribeCpp(session)) => session.model().arch().to_string(),
+            Some(_) => return ModelWindow::WholeRecording,
+            // Either nothing is loaded yet, or a transcription currently has the
+            // engine out of the mutex.
+            None => return ModelWindow::NoModelLoaded,
         };
         drop(guard);
 
-        short_form_window_secs(&arch).map(|secs| secs * Self::SAMPLE_RATE)
+        match short_form_window_secs(&arch) {
+            Some(secs) => ModelWindow::Split(secs * Self::SAMPLE_RATE),
+            None => ModelWindow::WholeRecording,
+        }
+    }
+
+    /// The live audio sink, handed to the recorder so finished windows can be
+    /// transcribed while the user is still talking.
+    pub fn ahead_of_stop(&self) -> Arc<AheadOfStop> {
+        self.ahead.clone()
+    }
+
+    /// A recording started: start working its windows ahead of the stop.
+    pub fn begin_ahead_of_stop(&self) {
+        self.ahead.begin();
+    }
+
+    /// A recording was thrown away: drop whatever was transcribed for it.
+    pub fn abandon_ahead_of_stop(&self) {
+        self.ahead.abandon();
+    }
+
+    /// Runs for the life of the app: waits for a full window of a live
+    /// recording, transcribes it, and parks again.
+    fn work_ahead_of_stop(&self) {
+        // The shortest window any model uses — below this no model can have a
+        // full piece, so there is nothing to look at.
+        let floor = SHORT_FORM_WINDOWS
+            .iter()
+            .map(|(_, secs)| *secs)
+            .min()
+            .unwrap_or(0)
+            * Self::SAMPLE_RATE;
+
+        while !self.shutdown_signal.load(Ordering::Relaxed) {
+            {
+                let state = self.ahead.state.lock().unwrap();
+                // The timeout is what re-checks the shutdown signal; the wake
+                // is what makes it prompt.
+                let _ = self
+                    .ahead
+                    .change
+                    .wait_timeout_while(state, Duration::from_secs(2), |state| {
+                        !self.ahead.open.load(Ordering::Relaxed) || state.pending.len() <= floor
+                    })
+                    .unwrap();
+            }
+            if self.shutdown_signal.load(Ordering::Relaxed) {
+                break;
+            }
+
+            // Resolved here rather than at the start of the recording: the model
+            // may still have been loading then.
+            let window = match self.model_window() {
+                ModelWindow::Split(window) => window,
+                // This model transcribes long audio by itself, so stop
+                // collecting rather than pile up samples nobody will read.
+                ModelWindow::WholeRecording => {
+                    if self.ahead.open.load(Ordering::Relaxed) {
+                        self.ahead.abandon();
+                    }
+                    continue;
+                }
+                // Still loading, or the previous recording is being transcribed
+                // and has the engine. Either way, ask again shortly rather than
+                // throw this recording's head start away.
+                ModelWindow::NoModelLoaded => continue,
+            };
+
+            let Some((generation, piece)) = self.ahead.claim(window) else {
+                continue;
+            };
+            let samples = piece.len();
+            match self.transcribe_once(piece) {
+                Ok(text) => self.ahead.deliver(generation, samples, text),
+                Err(e) => {
+                    warn!("Transcribing a piece of the live recording failed: {e}");
+                    self.ahead.spoil(generation);
+                }
+            }
+        }
     }
 
     pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
-        if let Some(window) = self.short_form_window() {
-            if audio.len() > window {
-                let pieces = split_audio_on_quiet(&audio, window);
-                info!(
-                    "Audio is {:.1}s, longer than this model's {}s window — transcribing it in {} pieces",
-                    audio.len() as f32 / Self::SAMPLE_RATE as f32,
-                    window / Self::SAMPLE_RATE,
-                    pieces.len()
-                );
+        // Closed first, and before anything reads the engine: `finish` waits out
+        // a piece that is still with the model, and until it returns that piece
+        // holds the engine — which would make the window lookup below see no
+        // model loaded and send a recording that needs splitting down the path
+        // that doesn't split it.
+        let worked_ahead = self.ahead.finish();
 
-                let mut parts: Vec<String> = Vec::new();
-                for piece in pieces {
-                    let text = self.transcribe_once(piece)?;
-                    let text = text.trim();
-                    if !text.is_empty() {
-                        parts.push(text.to_string());
-                    }
-                }
-                return Ok(parts.join(" "));
-            }
+        let Some(window) = self.short_form_window() else {
+            return self.transcribe_once(audio);
+        };
+
+        // What the worker already got through while the recording was running.
+        // A `done` past the end of the buffer would mean the two disagree about
+        // the audio, so fall back to transcribing all of it.
+        let (mut parts, done) = match worked_ahead {
+            Some((done, texts)) if done <= audio.len() => (texts, done),
+            _ => (Vec::new(), 0),
+        };
+
+        if done == 0 && audio.len() <= window {
+            return self.transcribe_once(audio);
         }
 
-        self.transcribe_once(audio)
+        let pieces = split_audio_on_quiet(&audio[done..], window);
+        info!(
+            "Audio is {:.1}s, longer than this model's {}s window — {:.1}s of it was transcribed \
+             while recording, {} piece(s) left",
+            audio.len() as f32 / Self::SAMPLE_RATE as f32,
+            window / Self::SAMPLE_RATE,
+            done as f32 / Self::SAMPLE_RATE as f32,
+            pieces.len()
+        );
+
+        for piece in pieces {
+            if piece.is_empty() {
+                continue;
+            }
+            let text = self.transcribe_once(piece)?;
+            let text = text.trim();
+            if !text.is_empty() {
+                parts.push(text.to_string());
+            }
+        }
+        Ok(parts.join(" "))
     }
 
     fn transcribe_once(&self, audio: Vec<f32>) -> Result<String> {
@@ -2041,40 +2315,15 @@ fn short_form_window_secs(arch: &str) -> Option<usize> {
 /// mid-word. Every sample is kept exactly once: the pieces concatenate back to
 /// the original.
 fn split_audio_on_quiet(audio: &[f32], max_len: usize) -> Vec<Vec<f32>> {
-    /// 20ms at 16kHz — short enough to land inside a natural pause.
-    const FRAME: usize = 320;
-
     if max_len == 0 || audio.len() <= max_len {
         return vec![audio.to_vec()];
     }
-
-    // How far back from the hard limit to hunt for a pause. A fifth of the
-    // window is long enough to reach a gap between sentences without making the
-    // pieces meaningfully shorter than they could be.
-    let search = (max_len / 5).max(FRAME);
 
     let mut pieces = Vec::new();
     let mut start = 0;
 
     while audio.len() - start > max_len {
-        let hard_end = start + max_len;
-        let search_start = hard_end.saturating_sub(search).max(start + FRAME);
-
-        let mut cut = hard_end;
-        let mut quietest = f32::MAX;
-        let mut frame_start = search_start;
-        while frame_start + FRAME <= hard_end {
-            let energy: f32 = audio[frame_start..frame_start + FRAME]
-                .iter()
-                .map(|sample| sample * sample)
-                .sum();
-            if energy < quietest {
-                quietest = energy;
-                cut = frame_start + FRAME / 2;
-            }
-            frame_start += FRAME;
-        }
-
+        let cut = start + cut_point(&audio[start..], max_len);
         pieces.push(audio[start..cut].to_vec());
         start = cut;
     }
@@ -2086,12 +2335,138 @@ fn split_audio_on_quiet(audio: &[f32], max_len: usize) -> Vec<Vec<f32>> {
     pieces
 }
 
+/// Where a piece starting at the front of `audio` should end, given it may run
+/// no longer than `max_len`. Looks only backwards from the limit, so the answer
+/// never depends on audio that hasn't been recorded yet — which is what lets
+/// [`AheadOfStop`] cut the same seams mid-recording that a batch split would.
+fn cut_point(audio: &[f32], max_len: usize) -> usize {
+    /// 20ms at 16kHz — short enough to land inside a natural pause.
+    const FRAME: usize = 320;
+
+    let hard_end = max_len.min(audio.len());
+    // How far back from the hard limit to hunt for a pause. A fifth of the
+    // window is long enough to reach a gap between sentences without making the
+    // pieces meaningfully shorter than they could be.
+    let search = (max_len / 5).max(FRAME);
+    let search_start = hard_end.saturating_sub(search).max(FRAME);
+
+    let mut cut = hard_end;
+    let mut quietest = f32::MAX;
+    let mut frame_start = search_start;
+    while frame_start + FRAME <= hard_end {
+        let energy: f32 = audio[frame_start..frame_start + FRAME]
+            .iter()
+            .map(|sample| sample * sample)
+            .sum();
+        if energy < quietest {
+            quietest = energy;
+            cut = frame_start + FRAME / 2;
+        }
+        frame_start += FRAME;
+    }
+
+    cut
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn languages(codes: &[&str]) -> Vec<String> {
         codes.iter().map(|code| (*code).to_string()).collect()
+    }
+
+    /// Run `audio` through [`AheadOfStop`] the way a recording does — frames in
+    /// as they are captured, pieces claimed and transcribed as they complete —
+    /// and return the pieces it worked ahead plus the tail left at the stop.
+    fn work_ahead(audio: &[f32], window: usize, frame: usize) -> (Vec<Vec<f32>>, Vec<f32>) {
+        let ahead = AheadOfStop::new();
+        ahead.begin();
+
+        let mut claimed = Vec::new();
+        for chunk in audio.chunks(frame) {
+            ahead.feed(chunk);
+            while let Some((generation, piece)) = ahead.claim(window) {
+                let samples = piece.len();
+                claimed.push(piece);
+                ahead.deliver(generation, samples, format!("piece {}", claimed.len()));
+            }
+        }
+
+        let done = ahead.finish().map(|(done, _)| done).unwrap_or(0);
+        (claimed, audio[done..].to_vec())
+    }
+
+    /// The whole point of working ahead: the same seams a batch split would have
+    /// chosen, so the text comes out identical and only the timing changes.
+    #[test]
+    fn working_ahead_cuts_a_recording_exactly_where_a_batch_split_would() {
+        // Speech-ish: loud stretches separated by quiet ones, so the cuts have
+        // somewhere to land other than the hard limit.
+        let audio: Vec<f32> = (0..250_000)
+            .map(|i| {
+                if (i / 7_000) % 4 == 3 {
+                    0.0
+                } else {
+                    (i as f32 * 0.01).sin() * 0.4
+                }
+            })
+            .collect();
+        let window = 40_000;
+
+        let (claimed, tail) = work_ahead(&audio, window, 480);
+        let live: Vec<Vec<f32>> = claimed
+            .into_iter()
+            .chain(split_audio_on_quiet(&tail, window))
+            .collect();
+
+        assert_eq!(live, split_audio_on_quiet(&audio, window));
+        assert_eq!(
+            live.concat(),
+            audio,
+            "working ahead must not drop or duplicate audio"
+        );
+    }
+
+    #[test]
+    fn a_recording_inside_the_window_is_never_worked_ahead() {
+        let audio = vec![0.3f32; 30_000];
+        let (claimed, tail) = work_ahead(&audio, 40_000, 480);
+        assert!(claimed.is_empty());
+        assert_eq!(tail, audio);
+    }
+
+    /// A cancelled recording leaves nothing behind for the next one to pick up.
+    #[test]
+    fn abandoning_a_recording_drops_what_was_transcribed_for_it() {
+        let ahead = AheadOfStop::new();
+        ahead.begin();
+        ahead.feed(&vec![0.3f32; 90_000]);
+        let (generation, piece) = ahead.claim(40_000).expect("a full window is ready");
+        let samples = piece.len();
+
+        // Escape lands while that piece is with the model, which then delivers.
+        ahead.abandon();
+        ahead.deliver(generation, samples, "gone".to_string());
+
+        assert!(ahead.finish().is_none());
+        ahead.begin();
+        assert!(ahead.claim(40_000).is_none(), "no audio carried over");
+    }
+
+    /// A piece the model failed on can't be filled in later, so the recording
+    /// has to be transcribed whole.
+    #[test]
+    fn a_lost_piece_sends_the_whole_recording_back_to_the_batch_path() {
+        let ahead = AheadOfStop::new();
+        ahead.begin();
+        ahead.feed(&vec![0.3f32; 130_000]);
+
+        let (generation, _) = ahead.claim(40_000).expect("a full window is ready");
+        ahead.spoil(generation);
+
+        assert!(ahead.claim(40_000).is_none(), "a spoiled run stops working");
+        assert!(ahead.finish().is_none());
     }
 
     #[test]

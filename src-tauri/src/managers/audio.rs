@@ -7,7 +7,7 @@ use crate::audio_toolkit::{
     AudioRecorder, SileroVad, VadPolicy,
 };
 use crate::helpers::clamshell;
-use crate::managers::transcription::StreamRouter;
+use crate::managers::transcription::{AheadOfStop, StreamRouter};
 use crate::settings::{get_settings, AppSettings};
 use crate::utils;
 use log::{debug, error, info, warn};
@@ -263,6 +263,7 @@ fn create_audio_recorder(
     vad_path: &Path,
     app_handle: &tauri::AppHandle,
     stream_router: Arc<StreamRouter>,
+    ahead_of_stop: Arc<AheadOfStop>,
 ) -> Result<AudioRecorder, anyhow::Error> {
     // A single Silero engine covers both the offline and streaming policies (never
     // active at once within a recording), so the recorder reconfigures its
@@ -294,8 +295,10 @@ fn create_audio_recorder(
         })
         .with_audio_callback({
             let router = stream_router;
+            let ahead = ahead_of_stop;
             move |frame| {
                 router.feed(frame);
+                ahead.feed(frame);
             }
         });
 
@@ -317,6 +320,7 @@ pub struct AudioRecordingManager {
     close_generation: Arc<AtomicU64>,
     cancel_generation: Arc<AtomicU64>,
     stream_router: Arc<StreamRouter>,
+    ahead_of_stop: Arc<AheadOfStop>,
     /// Resolution of a *named* microphone (selected or clamshell) to its cpal
     /// device, cached so on-demand recording starts skip the full device
     /// enumeration (~40-110ms). Keyed by the resolved name, so a settings
@@ -332,6 +336,7 @@ impl AudioRecordingManager {
     pub fn new(
         app: &tauri::AppHandle,
         stream_router: Arc<StreamRouter>,
+        ahead_of_stop: Arc<AheadOfStop>,
     ) -> Result<Self, anyhow::Error> {
         let settings = get_settings(app);
         let mode = if settings.always_on_microphone {
@@ -352,6 +357,7 @@ impl AudioRecordingManager {
             close_generation: Arc::new(AtomicU64::new(0)),
             cancel_generation: Arc::new(AtomicU64::new(0)),
             stream_router,
+            ahead_of_stop,
             cached_device: Arc::new(Mutex::new(None)),
         };
 
@@ -510,6 +516,7 @@ impl AudioRecordingManager {
                 &vad_path,
                 &self.app_handle,
                 Arc::clone(&self.stream_router),
+                Arc::clone(&self.ahead_of_stop),
             )?);
         }
         Ok(())
