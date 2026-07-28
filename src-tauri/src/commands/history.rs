@@ -64,9 +64,7 @@ pub async fn get_audio_duration_secs(
     if spec.sample_rate == 0 || spec.channels == 0 {
         return Ok(None);
     }
-    Ok(Some(
-        reader.duration() as f64 / spec.sample_rate as f64,
-    ))
+    Ok(Some(reader.duration() as f64 / spec.sample_rate as f64))
 }
 
 #[tauri::command]

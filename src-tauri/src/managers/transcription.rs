@@ -2092,7 +2092,10 @@ mod tests {
         assert_eq!(pieces.len(), 3);
         assert!(pieces.iter().all(|piece| piece.len() <= 10_000));
         let rejoined: Vec<f32> = pieces.concat();
-        assert_eq!(rejoined, audio, "splitting must not drop or duplicate audio");
+        assert_eq!(
+            rejoined, audio,
+            "splitting must not drop or duplicate audio"
+        );
     }
 
     /// The point of aiming at quiet: a seam through the middle of a word costs a

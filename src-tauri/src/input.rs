@@ -199,7 +199,9 @@ mod tests {
     #[test]
     fn chunking_covers_the_text_exactly() {
         for len in [1usize, 11, 12, 13, 500, 1_500] {
-            let text: String = (0..len).map(|i| char::from(b'a' + (i % 26) as u8)).collect();
+            let text: String = (0..len)
+                .map(|i| char::from(b'a' + (i % 26) as u8))
+                .collect();
             let size = typing_chunk_size(&text);
             let chars: Vec<char> = text.chars().collect();
             let rejoined: String = chars.chunks(size).flat_map(|c| c.iter()).collect();

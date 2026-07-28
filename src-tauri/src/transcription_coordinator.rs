@@ -123,9 +123,7 @@ fn classify_lock_event(
             return LockAction::Stop;
         }
         match pending_tap {
-            Some((pending_binding, gap))
-                if pending_binding == binding_id && gap >= MIN_TAP_GAP =>
-            {
+            Some((pending_binding, gap)) if pending_binding == binding_id && gap >= MIN_TAP_GAP => {
                 LockAction::Engage
             }
             _ => LockAction::None,
@@ -218,9 +216,9 @@ impl TranscriptionCoordinator {
                             }
 
                             let pending_tap = pending_release.as_ref().and_then(|pending| {
-                                pending
-                                    .tap_candidate
-                                    .then(|| (pending.binding_id.as_str(), pending.released_at.elapsed()))
+                                pending.tap_candidate.then(|| {
+                                    (pending.binding_id.as_str(), pending.released_at.elapsed())
+                                })
                             });
 
                             match classify_lock_event(
@@ -846,8 +844,7 @@ mod tests {
             }
 
             let pending_tap = self.pending.and_then(|(tap_candidate, released_at, _)| {
-                tap_candidate
-                    .then(|| (BINDING, Duration::from_millis(self.clock - released_at)))
+                tap_candidate.then(|| (BINDING, Duration::from_millis(self.clock - released_at)))
             });
 
             match classify_lock_event(
@@ -994,7 +991,10 @@ mod tests {
         let mut sim = LockSim::new(true);
         sim.run(&[LEv::Press, LEv::Wait(1_500), LEv::Release, LEv::Wait(60)]);
         assert_eq!(sim.starts, 1);
-        assert_eq!(sim.stops, 1, "a hold should not wait out the double-tap window");
+        assert_eq!(
+            sim.stops, 1,
+            "a hold should not wait out the double-tap window"
+        );
         assert!(!sim.locked);
     }
 

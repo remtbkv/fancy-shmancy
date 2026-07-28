@@ -43,7 +43,8 @@ const HandyTextLogo = ({
         />
       </g>
 
-      {/* the words */}
+      {/* the words — a wordmark, the one string that must not be translated */}
+      {/* eslint-disable i18next/no-literal-string */}
       <text
         x="238"
         y="176"
@@ -67,6 +68,7 @@ const HandyTextLogo = ({
       >
         SHMANCY
       </text>
+      {/* eslint-enable i18next/no-literal-string */}
 
       {/* monocle, dangling off the end of the wordmark */}
       <g>
