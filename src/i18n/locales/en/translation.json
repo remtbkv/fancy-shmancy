@@ -241,6 +241,10 @@
       "volume": {
         "title": "Volume",
         "description": "Adjust the volume of audio feedback sounds"
+      },
+      "pausePlaybackWhileRecording": {
+        "label": "Pause Playback While Recording",
+        "description": "Pause music playing out of the speakers while you dictate, then start it again — skipped on headphones"
       }
     },
     "advanced": {

@@ -138,6 +138,11 @@ transcribe-cpp = { version = "0.1.3", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
+# Which output device the sound is going to, and which processes are feeding it
+# — the two things media_control needs to decide whether the microphone can hear
+# what is playing.
+objc2-core-audio = { version = "0.3.2", features = ["AudioHardware"] }
+objc2-core-foundation = { version = "0.3.2", features = ["CFBase", "CFString"] }
 transcribe-cpp = { version = "0.1.3", default-features = false, features = ["metal"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

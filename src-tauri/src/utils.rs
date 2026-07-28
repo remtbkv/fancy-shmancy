@@ -1,5 +1,6 @@
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::transcription::TranscriptionManager;
+use crate::media_control;
 use crate::shortcut;
 use crate::TranscriptionCoordinator;
 use log::info;
@@ -93,6 +94,10 @@ pub fn cancel_current_operation_from(app: &AppHandle, source: &str) {
     // Abandon any live streaming transcription
     let tm = app.state::<Arc<TranscriptionManager>>();
     tm.cancel_stream();
+
+    // A cancelled recording never reaches the transcription pipeline, so this is
+    // the only place its paused playback gets started again.
+    media_control::resume_after_recording();
 
     // Update tray icon and hide overlay
     change_tray_icon(app, crate::tray::TrayIconState::Idle);

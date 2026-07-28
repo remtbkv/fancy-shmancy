@@ -429,6 +429,8 @@ pub struct AppSettings {
     pub post_process_selected_prompt_id: Option<String>,
     #[serde(default)]
     pub mute_while_recording: bool,
+    #[serde(default = "default_pause_playback_while_recording")]
+    pub pause_playback_while_recording: bool,
     #[serde(default)]
     pub append_trailing_space: bool,
     #[serde(default = "default_app_language")]
@@ -532,6 +534,12 @@ fn default_overlay_style() -> OverlayStyle {
 }
 
 fn default_vad_enabled() -> bool {
+    true
+}
+
+/// On by default: a recording that picks up the music you are talking over is
+/// worse than a moment of silence you didn't ask for.
+fn default_pause_playback_while_recording() -> bool {
     true
 }
 
@@ -881,6 +889,7 @@ pub fn get_default_settings() -> AppSettings {
         post_process_prompts: default_post_process_prompts(),
         post_process_selected_prompt_id: None,
         mute_while_recording: false,
+        pause_playback_while_recording: default_pause_playback_while_recording(),
         append_trailing_space: false,
         app_language: default_app_language(),
         theme: default_theme(),

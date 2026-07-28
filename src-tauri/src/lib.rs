@@ -11,6 +11,7 @@ mod helpers;
 mod input;
 mod llm_client;
 mod managers;
+mod media_control;
 mod overlay;
 pub mod portable;
 mod settings;
@@ -640,6 +641,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::suspend_binding,
             shortcut::resume_binding,
             shortcut::change_mute_while_recording_setting,
+            shortcut::change_pause_playback_while_recording_setting,
             shortcut::change_append_trailing_space_setting,
             shortcut::change_lazy_stream_close_setting,
             shortcut::change_vad_enabled_setting,
