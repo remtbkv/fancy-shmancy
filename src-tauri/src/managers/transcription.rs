@@ -1109,12 +1109,6 @@ impl TranscriptionManager {
         .emit(&self.app_handle);
     }
 
-    /// Longest audio a short-window model is fed in one go. Canary is trained on
-    /// clips of about half a minute and answers anything longer with an empty
-    /// string — no error, no partial text, just silence — so a minute of speech
-    /// came back as "transcription failed". Measured on this machine: 26.9s
-    /// transcribed fine, 30.7s and 54.4s both returned nothing.
-    const SHORT_FORM_WINDOW_SECS: usize = 24;
     const SAMPLE_RATE: usize = 16_000;
 
     /// The sample count past which the loaded model needs its audio split up,
@@ -1128,8 +1122,7 @@ impl TranscriptionManager {
         };
         drop(guard);
 
-        arch.contains("canary")
-            .then_some(Self::SHORT_FORM_WINDOW_SECS * Self::SAMPLE_RATE)
+        short_form_window_secs(&arch).map(|secs| secs * Self::SAMPLE_RATE)
     }
 
     pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
@@ -1139,7 +1132,7 @@ impl TranscriptionManager {
                 info!(
                     "Audio is {:.1}s, longer than this model's {}s window — transcribing it in {} pieces",
                     audio.len() as f32 / Self::SAMPLE_RATE as f32,
-                    Self::SHORT_FORM_WINDOW_SECS,
+                    window / Self::SAMPLE_RATE,
                     pieces.len()
                 );
 
@@ -2016,6 +2009,33 @@ pub fn get_available_accelerators() -> AvailableAccelerators {
     }
 }
 
+/// Longest audio a model is fed in one go, in seconds, for the architectures
+/// that quietly give up on anything longer. Matched as a substring of the GGUF
+/// `general.architecture`, so `canary_qwen` and `cohere_asr` are covered too.
+///
+/// Canary answers a clip past its half-minute training length with an empty
+/// string — no error, no partial text — so a minute of speech came back as
+/// "transcription failed". Measured here: 26.9s transcribed, 30.7s and 54.4s
+/// both returned nothing.
+///
+/// Cohere Transcribe fails the same way but silently: it emits end-of-text
+/// early and returns a transcript that simply stops partway, which reads as the
+/// tail of a long recording going missing. Its own limits are far away (a 400s
+/// encoder span, a 512-token output budget that never reported truncation
+/// here), so this is the trained span, not a bound the runtime enforces.
+/// Measured on two of Rem's recordings by transcribing prefixes and comparing
+/// words per second against the same speech in short pieces: flat and complete
+/// through 50s, erratic and lossy from 55s on (102s of speech came back as 65s
+/// of text; 120s came back as roughly a third).
+const SHORT_FORM_WINDOWS: &[(&str, usize)] = &[("canary", 24), ("cohere", 40)];
+
+fn short_form_window_secs(arch: &str) -> Option<usize> {
+    SHORT_FORM_WINDOWS
+        .iter()
+        .find(|(name, _)| arch.contains(name))
+        .map(|(_, secs)| *secs)
+}
+
 /// Cut `audio` into pieces no longer than `max_len`, preferring the quietest
 /// spot near the end of each piece so the seam falls in a pause rather than
 /// mid-word. Every sample is kept exactly once: the pieces concatenate back to
@@ -2072,6 +2092,15 @@ mod tests {
 
     fn languages(codes: &[&str]) -> Vec<String> {
         codes.iter().map(|code| (*code).to_string()).collect()
+    }
+
+    #[test]
+    fn the_short_window_models_are_matched_by_their_gguf_arch() {
+        // The real `general.architecture` strings, not the family names.
+        assert_eq!(short_form_window_secs("cohere_asr"), Some(40));
+        assert_eq!(short_form_window_secs("canary_qwen"), Some(24));
+        // Whisper walks its own windows, so it must not be cut up.
+        assert_eq!(short_form_window_secs("whisper"), None);
     }
 
     #[test]
