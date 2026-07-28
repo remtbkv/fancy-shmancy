@@ -55,10 +55,15 @@ pub struct CliArgs {
 
     /// Feed the WAV through the live recording path first, so the pieces a
     /// short-window model needs are transcribed while the "recording" is still
-    /// going — the same thing that happens when you talk. Replays at 20x real
-    /// time. Without this, --transcribe-file only exercises the batch path.
-    #[arg(long)]
-    pub live: bool,
+    /// going — the same thing that happens when you talk. Without this,
+    /// --transcribe-file only exercises the batch path.
+    ///
+    /// Replays at 20x real time by default, which is fast but lets the feed
+    /// catch up to the model near the end of a short recording and makes the
+    /// wait after the stop look longer than it is. Pass `--live 1` for the
+    /// timing you would actually see.
+    #[arg(long, value_name = "SPEED", num_args = 0..=1, default_missing_value = "20")]
+    pub live: Option<f32>,
 
     /// Repeat the transcription N times (best_ms reports the fastest run).
     #[arg(long, value_name = "N")]

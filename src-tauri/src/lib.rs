@@ -545,8 +545,8 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
                 return 1;
             }
         }
-        if args.live {
-            replay_as_recorded(&tm, &samples);
+        if let Some(speed) = args.live {
+            replay_as_recorded(&tm, &samples, speed);
         }
         let t = Instant::now();
         match tm.transcribe(samples.clone()) {
@@ -597,20 +597,19 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
 }
 
 /// Hand `samples` to the transcription manager the way the microphone does:
-/// 30ms frames, in order, while the recording is notionally still running. Runs
-/// at 20x real time — fast enough that a two-minute file replays in seconds,
-/// slow enough that the ahead-of-stop worker stays ahead of the feed exactly as
-/// it does live.
-fn replay_as_recorded(tm: &Arc<TranscriptionManager>, samples: &[f32]) {
+/// 30ms frames, in order, while the recording is notionally still running.
+/// `speed` is a multiple of real time — 1.0 reproduces the real timing, higher
+/// replays faster than the recording happened.
+fn replay_as_recorded(tm: &Arc<TranscriptionManager>, samples: &[f32], speed: f32) {
     use std::time::Duration;
 
     const FRAME: usize = 480; // 30ms at 16 kHz, the recorder's frame size
-    const PACE: Duration = Duration::from_micros(30_000 / 20);
+    let pace = Duration::from_secs_f32(0.030 / speed.max(0.01));
 
     tm.begin_ahead_of_stop();
     for frame in samples.chunks(FRAME) {
         tm.ahead_of_stop().feed(frame);
-        std::thread::sleep(PACE);
+        std::thread::sleep(pace);
     }
 }
 
