@@ -155,9 +155,27 @@ export const getKeyName = (
 };
 
 /**
+ * Names that would read badly under plain capitalization. Mouse buttons come
+ * back from the backend as "mousex1"/"mousex2"; on a mouse they are the side
+ * buttons everyone calls 4 and 5.
+ */
+const KEY_LABELS: Record<string, string> = {
+  mouseleft: "Left Click",
+  mouseright: "Right Click",
+  mousemiddle: "Middle Click",
+  mousex1: "Mouse 4",
+  mousex2: "Mouse 5",
+  forwarddelete: "Fwd Delete",
+  pageup: "Page Up",
+  pagedown: "Page Down",
+};
+
+/**
  * Capitalize a key name for display (e.g. "space" -> "Space", "f1" -> "F1")
  */
 const capitalizeKey = (key: string): string => {
+  const label = KEY_LABELS[key.toLowerCase()];
+  if (label) return label;
   // fn key: keep lowercase
   if (key === "fn") return "fn";
   // Function keys: f1 -> F1

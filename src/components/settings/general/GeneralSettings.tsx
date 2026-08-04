@@ -7,6 +7,9 @@ import { SettingsGroup } from "../../ui/SettingsGroup";
 import { OutputDeviceSelector } from "../OutputDeviceSelector";
 import { PushToTalk } from "../PushToTalk";
 import { PttDoubleTapLock } from "../PttDoubleTapLock";
+import { CancelOnEditingKeys } from "../CancelOnEditingKeys";
+import { EditingCancelGrace } from "../EditingCancelGrace";
+import { PasteLastTranscriptWindow } from "../PasteLastTranscriptWindow";
 import { AudioFeedback } from "../AudioFeedback";
 import { useSettings } from "../../../hooks/useSettings";
 import { VolumeSlider } from "../VolumeSlider";
@@ -18,19 +21,32 @@ export const GeneralSettings: React.FC = () => {
   const { t } = useTranslation();
   const { audioFeedbackEnabled, getSetting } = useSettings();
   const pushToTalk = getSetting("push_to_talk");
+  const cancelOnEditingKeys = getSetting("cancel_on_editing_keys") ?? true;
   const isLinux = type() === "linux";
   return (
     <div className="max-w-3xl w-full mx-auto space-y-6">
       <SettingsGroup title={t("settings.general.title")}>
         <ShortcutInput shortcutId="transcribe" grouped={true} />
+        <ShortcutInput shortcutId="stop_recording" grouped={true} />
         <PushToTalk descriptionMode="tooltip" grouped={true} />
         {pushToTalk && (
           <PttDoubleTapLock descriptionMode="tooltip" grouped={true} />
+        )}
+        {/* Only push-to-talk holds a key long enough for an editing chord to be mistaken for dictation */}
+        {pushToTalk && (
+          <CancelOnEditingKeys descriptionMode="tooltip" grouped={true} />
+        )}
+        {pushToTalk && cancelOnEditingKeys && (
+          <EditingCancelGrace descriptionMode="tooltip" grouped={true} />
         )}
         {/* Cancel shortcut is hidden with push-to-talk (release key cancels) and on Linux (dynamic shortcut instability) */}
         {!isLinux && !pushToTalk && (
           <ShortcutInput shortcutId="cancel" grouped={true} />
         )}
+      </SettingsGroup>
+      <SettingsGroup title={t("settings.general.pasteLastTranscript.title")}>
+        <ShortcutInput shortcutId="paste_last_transcript" grouped={true} />
+        <PasteLastTranscriptWindow descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
       <ModelSettingsCard />
       <SettingsGroup title={t("settings.sound.title")}>

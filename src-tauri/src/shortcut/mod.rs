@@ -9,6 +9,7 @@
 //! The active implementation is determined by the `keyboard_implementation`
 //! setting and can be changed at runtime.
 
+pub mod editing_guard;
 mod handler;
 pub mod handy_keys;
 mod tauri_impl;
@@ -33,6 +34,8 @@ use crate::tray;
 /// Initialize shortcuts using the configured implementation
 pub fn init_shortcuts(app: &AppHandle) {
     let user_settings = settings::load_or_create_app_settings(app);
+
+    editing_guard::sync(app, &user_settings);
 
     // Check which implementation to use
     match user_settings.keyboard_implementation {
@@ -103,6 +106,19 @@ pub struct BindingResponse {
     error: Option<String>,
 }
 
+/// Trim, drop blanks and drop repeats, so the stored list is exactly what gets
+/// registered.
+fn normalize_shortcuts(shortcuts: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(shortcuts.len());
+    for raw in shortcuts {
+        let shortcut = raw.trim().to_string();
+        if !shortcut.is_empty() && !out.contains(&shortcut) {
+            out.push(shortcut);
+        }
+    }
+    out
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn change_binding(
@@ -114,6 +130,29 @@ pub fn change_binding(
     if binding.trim().is_empty() {
         return Err("Binding cannot be empty".to_string());
     }
+
+    // Editing the primary shortcut leaves any additional ones in place.
+    let extras = settings::get_bindings(&app)
+        .get(&id)
+        .map(|b| b.extra_bindings.clone())
+        .unwrap_or_default();
+
+    let mut shortcuts = vec![binding];
+    shortcuts.extend(extras);
+    set_binding_shortcuts(app, id, shortcuts)
+}
+
+/// Replace the whole shortcut list for an action. The first entry becomes the
+/// primary shortcut and the rest become alternates; an empty list unbinds the
+/// action.
+#[tauri::command]
+#[specta::specta]
+pub fn set_binding_shortcuts(
+    app: AppHandle,
+    id: String,
+    shortcuts: Vec<String>,
+) -> Result<BindingResponse, String> {
+    let shortcuts = normalize_shortcuts(shortcuts);
 
     let mut settings = settings::get_settings(&app);
 
@@ -133,7 +172,7 @@ pub fn change_binding(
                 }
                 None => {
                     let error_msg = format!("Binding with id '{}' not found in defaults", id);
-                    warn!("change_binding error: {}", error_msg);
+                    warn!("set_binding_shortcuts error: {}", error_msg);
                     return Ok(BindingResponse {
                         success: false,
                         binding: None,
@@ -144,42 +183,46 @@ pub fn change_binding(
         }
     };
 
+    // Create an updated binding
+    let mut updated_binding = binding_to_modify.clone();
+    let mut remaining = shortcuts.clone().into_iter();
+    updated_binding.current_binding = remaining.next().unwrap_or_default();
+    updated_binding.extra_bindings = remaining.collect();
+
     // If this is the cancel binding, just update the settings and return
     // It's managed dynamically, so we don't register/unregister here
     if id == "cancel" {
-        if let Some(mut b) = settings.bindings.get(&id).cloned() {
-            b.current_binding = binding;
-            settings.bindings.insert(id.clone(), b.clone());
-            settings::write_settings(&app, settings);
-            return Ok(BindingResponse {
-                success: true,
-                binding: Some(b.clone()),
-                error: None,
-            });
-        }
+        settings
+            .bindings
+            .insert(id.clone(), updated_binding.clone());
+        settings::write_settings(&app, settings);
+        return Ok(BindingResponse {
+            success: true,
+            binding: Some(updated_binding),
+            error: None,
+        });
     }
 
     // Unregister the existing binding
-    if let Err(e) = unregister_shortcut(&app, binding_to_modify.clone()) {
+    if let Err(e) = unregister_shortcut(&app, binding_to_modify) {
         let error_msg = format!("Failed to unregister shortcut: {}", e);
-        error!("change_binding error: {}", error_msg);
+        error!("set_binding_shortcuts error: {}", error_msg);
     }
 
-    // Validate the new shortcut for the current keyboard implementation
-    if let Err(e) = validate_shortcut_for_implementation(&binding, settings.keyboard_implementation)
-    {
-        warn!("change_binding validation error: {}", e);
-        return Err(e);
+    // Validate the new shortcuts for the current keyboard implementation
+    for shortcut in &shortcuts {
+        if let Err(e) =
+            validate_shortcut_for_implementation(shortcut, settings.keyboard_implementation)
+        {
+            warn!("set_binding_shortcuts validation error: {}", e);
+            return Err(e);
+        }
     }
-
-    // Create an updated binding
-    let mut updated_binding = binding_to_modify;
-    updated_binding.current_binding = binding;
 
     // Register the new binding
     if let Err(e) = register_shortcut(&app, updated_binding.clone()) {
         let error_msg = format!("Failed to register shortcut: {}", e);
-        error!("change_binding error: {}", error_msg);
+        error!("set_binding_shortcuts error: {}", error_msg);
         return Ok(BindingResponse {
             success: false,
             binding: None,
@@ -204,8 +247,9 @@ pub fn change_binding(
 #[tauri::command]
 #[specta::specta]
 pub fn reset_binding(app: AppHandle, id: String) -> Result<BindingResponse, String> {
+    // A reset drops the alternates too — the default is the whole default.
     let binding = settings::get_stored_binding(&app, &id);
-    change_binding(app, id, binding.default_binding)
+    set_binding_shortcuts(app, id, vec![binding.default_binding])
 }
 
 /// Temporarily unregister a binding while the user is editing it in the UI.
@@ -403,10 +447,12 @@ fn register_all_shortcuts_for_implementation(
             .cloned()
             .unwrap_or_else(|| default_binding.clone());
 
-        // Validate the shortcut for the target implementation
-        if let Err(e) =
-            validate_shortcut_for_implementation(&binding.current_binding, implementation)
-        {
+        // Validate every shortcut for the target implementation. One invalid
+        // entry resets the whole binding, alternates included, rather than
+        // leaving a half-registered action behind.
+        if let Some(e) = binding.shortcuts().iter().find_map(|shortcut| {
+            validate_shortcut_for_implementation(shortcut, implementation).err()
+        }) {
             info!(
                 "Shortcut '{}' ({}) is invalid for {:?}: {}. Resetting to default.",
                 id, binding.current_binding, implementation, e
@@ -414,6 +460,7 @@ fn register_all_shortcuts_for_implementation(
 
             // Reset to default
             binding.current_binding = default_binding.current_binding.clone();
+            binding.extra_bindings = default_binding.extra_bindings.clone();
             current_settings
                 .bindings
                 .insert(id.clone(), binding.clone());
@@ -483,6 +530,39 @@ pub fn change_ptt_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
 pub fn change_ptt_double_tap_lock_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.ptt_double_tap_lock = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_cancel_on_editing_keys_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.cancel_on_editing_keys = enabled;
+    settings::write_settings(&app, settings.clone());
+    // Starts or stops the watcher thread, so the setting takes effect now
+    // rather than at the next launch.
+    editing_guard::sync(&app, &settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_editing_cancel_grace_ms_setting(app: AppHandle, ms: u64) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.editing_cancel_grace_ms = ms;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_paste_last_transcript_window_setting(
+    app: AppHandle,
+    seconds: u64,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.paste_last_transcript_window_secs = seconds;
     settings::write_settings(&app, settings);
     Ok(())
 }
@@ -1300,4 +1380,28 @@ pub async fn get_available_accelerators() -> crate::managers::transcription::Ava
     tauri::async_runtime::spawn_blocking(crate::managers::transcription::get_available_accelerators)
         .await
         .expect("get_available_accelerators panicked")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_shortcuts;
+
+    #[test]
+    fn the_stored_list_is_what_gets_registered() {
+        assert_eq!(
+            normalize_shortcuts(vec![
+                " option_right ".into(),
+                String::new(),
+                "mouse4".into(),
+                "option_right".into(),
+                "   ".into(),
+            ]),
+            vec!["option_right".to_string(), "mouse4".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_list_of_blanks_unbinds_the_action() {
+        assert!(normalize_shortcuts(vec![String::new(), "  ".into()]).is_empty());
+    }
 }

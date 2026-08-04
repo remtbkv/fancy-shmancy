@@ -42,11 +42,47 @@ use crate::settings::{self, get_settings, ShortcutBinding};
 
 use super::handler::handle_shortcut_event;
 
+/// Which of the two hotkey managers a registration lives in. Their ids are
+/// numbered independently, so an id only identifies a hotkey together with its
+/// lane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Lane {
+    /// Registered hotkeys are swallowed before other applications see them.
+    Blocking,
+    /// Detected and passed on untouched.
+    PassThrough,
+}
+
+impl Lane {
+    fn manager<'a>(
+        self,
+        blocking: &'a HotkeyManager,
+        unblocked: Option<&'a HotkeyManager>,
+    ) -> &'a HotkeyManager {
+        match self {
+            Lane::Blocking => blocking,
+            Lane::PassThrough => unblocked.unwrap_or(blocking),
+        }
+    }
+}
+
+/// A modifier-only shortcut has to pass through: swallowing its key-down would
+/// stop the modifier from modifying anything, which is what turns right
+/// Option+Delete from "delete a word" into "delete a character". Everything
+/// else is blocked, so a shortcut does not also type into whatever is in front.
+fn lane_for(hotkey: Hotkey, have_unblocked: bool) -> Lane {
+    if hotkey.key.is_none() && have_unblocked {
+        Lane::PassThrough
+    } else {
+        Lane::Blocking
+    }
+}
+
 /// Commands that can be sent to the hotkey manager thread
 enum ManagerCommand {
     Register {
         binding_id: String,
-        hotkey_string: String,
+        hotkey_strings: Vec<String>,
         response: Sender<Result<(), String>>,
     },
     Unregister {
@@ -119,20 +155,47 @@ impl HandyKeysState {
             }
         };
 
-        // Maps binding IDs to HotkeyIds and hotkey strings
-        let mut binding_to_hotkey: HashMap<String, HotkeyId> = HashMap::new();
-        let mut hotkey_to_binding: HashMap<HotkeyId, (String, String)> = HashMap::new(); // (binding_id, hotkey_string)
+        // A second manager that swallows nothing. Blocking a modifier-only
+        // shortcut would swallow the modifier's key-down, and a modifier whose
+        // press never reaches the system stops being a modifier: right Option
+        // as push-to-talk would leave Option+Delete deleting one character
+        // instead of a word. Those shortcuts are watched here instead.
+        let unblocked = match HotkeyManager::new() {
+            Ok(m) => Some(m),
+            Err(e) => {
+                error!(
+                    "Failed to create the pass-through HotkeyManager ({}). \
+                     Modifier-only shortcuts will keep their modifier from reaching other apps.",
+                    e
+                );
+                None
+            }
+        };
+
+        // Maps binding IDs to HotkeyIds and hotkey strings. A binding can hold
+        // several hotkeys — a key and a mouse button, say — so the forward map
+        // is one-to-many, and each entry remembers which manager owns it.
+        let mut binding_to_hotkey: HashMap<String, Vec<(Lane, HotkeyId)>> = HashMap::new();
+        let mut hotkey_to_binding: HashMap<(Lane, HotkeyId), (String, String)> = HashMap::new(); // (binding_id, hotkey_string)
 
         loop {
             // Check for hotkey events (non-blocking)
-            while let Some(event) = manager.try_recv() {
-                if let Some((binding_id, hotkey_string)) = hotkey_to_binding.get(&event.id) {
-                    debug!(
-                        "handy-keys event: binding={}, hotkey={}, state={:?}",
-                        binding_id, hotkey_string, event.state
-                    );
-                    let is_pressed = event.state == HotkeyState::Pressed;
-                    handle_shortcut_event(&app, binding_id, hotkey_string, is_pressed);
+            for (lane, hotkeys) in [
+                (Lane::Blocking, Some(&manager)),
+                (Lane::PassThrough, unblocked.as_ref()),
+            ] {
+                let Some(hotkeys) = hotkeys else { continue };
+                while let Some(event) = hotkeys.try_recv() {
+                    if let Some((binding_id, hotkey_string)) =
+                        hotkey_to_binding.get(&(lane, event.id))
+                    {
+                        debug!(
+                            "handy-keys event: binding={}, hotkey={}, state={:?}",
+                            binding_id, hotkey_string, event.state
+                        );
+                        let is_pressed = event.state == HotkeyState::Pressed;
+                        handle_shortcut_event(&app, binding_id, hotkey_string, is_pressed);
+                    }
                 }
             }
 
@@ -141,15 +204,16 @@ impl HandyKeysState {
                 Ok(cmd) => match cmd {
                     ManagerCommand::Register {
                         binding_id,
-                        hotkey_string,
+                        hotkey_strings,
                         response,
                     } => {
                         let result = Self::do_register(
                             &manager,
+                            unblocked.as_ref(),
                             &mut binding_to_hotkey,
                             &mut hotkey_to_binding,
                             &binding_id,
-                            &hotkey_string,
+                            &hotkey_strings,
                         );
                         let _ = response.send(result);
                     }
@@ -159,6 +223,7 @@ impl HandyKeysState {
                     } => {
                         let result = Self::do_unregister(
                             &manager,
+                            unblocked.as_ref(),
                             &mut binding_to_hotkey,
                             &mut hotkey_to_binding,
                             &binding_id,
@@ -183,58 +248,109 @@ impl HandyKeysState {
         info!("handy-keys manager thread stopped");
     }
 
-    /// Register a hotkey
+    /// Register every hotkey a binding carries.
+    ///
+    /// Registration is all-or-nothing: a failure part-way through rolls back
+    /// the hotkeys this call already claimed, so a binding is never left
+    /// half-live.
     fn do_register(
         manager: &HotkeyManager,
-        binding_to_hotkey: &mut HashMap<String, HotkeyId>,
-        hotkey_to_binding: &mut HashMap<HotkeyId, (String, String)>,
+        unblocked: Option<&HotkeyManager>,
+        binding_to_hotkey: &mut HashMap<String, Vec<(Lane, HotkeyId)>>,
+        hotkey_to_binding: &mut HashMap<(Lane, HotkeyId), (String, String)>,
         binding_id: &str,
-        hotkey_string: &str,
+        hotkey_strings: &[String],
     ) -> Result<(), String> {
-        let hotkey: Hotkey = hotkey_string
-            .parse()
-            .map_err(|e| format!("Failed to parse hotkey '{}': {}", hotkey_string, e))?;
+        let mut registered: Vec<(Lane, HotkeyId)> = Vec::with_capacity(hotkey_strings.len());
 
-        let id = manager
-            .register(hotkey)
-            .map_err(|e| format!("Failed to register hotkey: {}", e))?;
+        for hotkey_string in hotkey_strings {
+            let result = hotkey_string
+                .parse::<Hotkey>()
+                .map_err(|e| format!("Failed to parse hotkey '{}': {}", hotkey_string, e))
+                .and_then(|hotkey| {
+                    let lane = lane_for(hotkey, unblocked.is_some());
+                    let hotkeys = match lane {
+                        Lane::Blocking => manager,
+                        Lane::PassThrough => unblocked.expect("lane_for checked this"),
+                    };
+                    hotkeys.register(hotkey).map(|id| (lane, id)).map_err(|e| {
+                        format!("Failed to register hotkey '{}': {}", hotkey_string, e)
+                    })
+                });
 
-        binding_to_hotkey.insert(binding_id.to_string(), id);
-        hotkey_to_binding.insert(id, (binding_id.to_string(), hotkey_string.to_string()));
+            match result {
+                Ok((lane, id)) => {
+                    hotkey_to_binding.insert(
+                        (lane, id),
+                        (binding_id.to_string(), hotkey_string.to_string()),
+                    );
+                    registered.push((lane, id));
+                    debug!(
+                        "Registered handy-keys shortcut: {} -> {} ({:?})",
+                        binding_id, hotkey_string, lane
+                    );
+                }
+                Err(e) => {
+                    for (lane, id) in registered {
+                        let _ = lane.manager(manager, unblocked).unregister(id);
+                        hotkey_to_binding.remove(&(lane, id));
+                    }
+                    return Err(e);
+                }
+            }
+        }
 
-        debug!(
-            "Registered handy-keys shortcut: {} -> {:?}",
-            binding_id, hotkey
-        );
-        Ok(())
-    }
-
-    /// Unregister a hotkey
-    fn do_unregister(
-        manager: &HotkeyManager,
-        binding_to_hotkey: &mut HashMap<String, HotkeyId>,
-        hotkey_to_binding: &mut HashMap<HotkeyId, (String, String)>,
-        binding_id: &str,
-    ) -> Result<(), String> {
-        if let Some(id) = binding_to_hotkey.remove(binding_id) {
-            manager
-                .unregister(id)
-                .map_err(|e| format!("Failed to unregister hotkey: {}", e))?;
-            hotkey_to_binding.remove(&id);
-            debug!("Unregistered handy-keys shortcut: {}", binding_id);
+        if !registered.is_empty() {
+            binding_to_hotkey
+                .entry(binding_id.to_string())
+                .or_default()
+                .extend(registered);
         }
         Ok(())
     }
 
+    /// Unregister every hotkey a binding holds
+    fn do_unregister(
+        manager: &HotkeyManager,
+        unblocked: Option<&HotkeyManager>,
+        binding_to_hotkey: &mut HashMap<String, Vec<(Lane, HotkeyId)>>,
+        hotkey_to_binding: &mut HashMap<(Lane, HotkeyId), (String, String)>,
+        binding_id: &str,
+    ) -> Result<(), String> {
+        let Some(ids) = binding_to_hotkey.remove(binding_id) else {
+            return Ok(());
+        };
+
+        let mut first_error = None;
+        for (lane, id) in ids {
+            if let Err(e) = lane.manager(manager, unblocked).unregister(id) {
+                first_error.get_or_insert(format!("Failed to unregister hotkey: {}", e));
+            }
+            hotkey_to_binding.remove(&(lane, id));
+        }
+        debug!("Unregistered handy-keys shortcut: {}", binding_id);
+
+        match first_error {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+
     /// Register a shortcut binding
     pub fn register(&self, binding: &ShortcutBinding) -> Result<(), String> {
+        let hotkey_strings = binding.shortcuts();
+        if hotkey_strings.is_empty() {
+            // Unbound action: nothing to listen for.
+            return Ok(());
+        }
+
         let (tx, rx) = mpsc::channel();
         self.command_sender
             .lock()
             .map_err(|_| "Failed to lock command_sender")?
             .send(ManagerCommand::Register {
                 binding_id: binding.id.clone(),
-                hotkey_string: binding.current_binding.clone(),
+                hotkey_strings,
                 response: tx,
             })
             .map_err(|_| "Failed to send register command")?;
@@ -546,4 +662,32 @@ pub fn stop_handy_keys_recording(app: AppHandle) -> Result<(), String> {
         .try_state::<HandyKeysState>()
         .ok_or("HandyKeysState not initialized")?;
     state.stop_recording()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{lane_for, Lane};
+    use handy_keys::Hotkey;
+
+    #[test]
+    fn a_modifier_only_shortcut_keeps_its_modifier_alive() {
+        let hotkey: Hotkey = "option_right".parse().unwrap();
+        assert_eq!(lane_for(hotkey, true), Lane::PassThrough);
+    }
+
+    #[test]
+    fn shortcuts_with_a_key_are_swallowed() {
+        for raw in ["option+space", "command+shift+v", "escape", "f13"] {
+            let hotkey: Hotkey = raw.parse().unwrap();
+            assert_eq!(lane_for(hotkey, true), Lane::Blocking, "{raw}");
+        }
+    }
+
+    /// Without a pass-through manager there is nowhere else to put it, so it
+    /// falls back to the old behavior rather than going unregistered.
+    #[test]
+    fn modifier_only_falls_back_to_blocking_when_there_is_no_other_lane() {
+        let hotkey: Hotkey = "option_right".parse().unwrap();
+        assert_eq!(lane_for(hotkey, false), Lane::Blocking);
+    }
 }

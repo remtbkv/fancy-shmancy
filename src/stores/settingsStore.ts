@@ -31,6 +31,7 @@ interface SettingsStore {
   refreshAudioDevices: () => Promise<void>;
   refreshOutputDevices: () => Promise<void>;
   updateBinding: (id: string, binding: string) => Promise<void>;
+  setBindingShortcuts: (id: string, shortcuts: string[]) => Promise<void>;
   resetBinding: (id: string) => Promise<void>;
   getSetting: <K extends keyof Settings>(key: K) => Settings[K] | undefined;
   isUpdatingKey: (key: string) => boolean;
@@ -95,6 +96,12 @@ const settingUpdaters: {
   push_to_talk: (value) => commands.changePttSetting(value as boolean),
   ptt_double_tap_lock: (value) =>
     commands.changePttDoubleTapLockSetting(value as boolean),
+  cancel_on_editing_keys: (value) =>
+    commands.changeCancelOnEditingKeysSetting(value as boolean),
+  editing_cancel_grace_ms: (value) =>
+    commands.changeEditingCancelGraceMsSetting(value as number),
+  paste_last_transcript_window_secs: (value) =>
+    commands.changePasteLastTranscriptWindowSetting(value as number),
   selected_microphone: (value) =>
     commands.setSelectedMicrophone(
       (value as string) === "Default" || value === null
@@ -383,6 +390,35 @@ export const useSettingsStore = create<SettingsStore>()(
         }
 
         // Re-throw to let the caller know it failed
+        throw error;
+      } finally {
+        setUpdating(updateKey, false);
+      }
+    },
+
+    // Replace the whole shortcut list for an action: the first entry is the
+    // primary shortcut, the rest are alternates. An empty list unbinds it.
+    setBindingShortcuts: async (id, shortcuts) => {
+      const { setUpdating, refreshSettings } = get();
+      const updateKey = `binding_${id}`;
+
+      setUpdating(updateKey, true);
+
+      try {
+        const result = await commands.setBindingShortcuts(id, shortcuts);
+
+        if (result.status === "error") {
+          throw new Error(result.error);
+        }
+        if (!result.data.success) {
+          throw new Error(result.data.error || "Failed to update shortcuts");
+        }
+
+        await refreshSettings();
+      } catch (error) {
+        console.error(`Failed to set shortcuts for ${id}:`, error);
+        // The backend is the source of truth for what is actually registered.
+        await refreshSettings();
         throw error;
       } finally {
         setUpdating(updateKey, false);

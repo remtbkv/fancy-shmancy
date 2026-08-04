@@ -178,13 +178,24 @@
           "transcribe_with_post_process": {
             "name": "Post-Processing Hotkey",
             "description": "Optional: A dedicated hotkey that always applies AI post-processing to your transcription."
+          },
+          "stop_recording": {
+            "name": "Stop Recording Shortcut",
+            "description": "Ends the recording in progress and transcribes it. Useful when recording is running hands-free."
+          },
+          "paste_last_transcript": {
+            "name": "Paste Last Transcript",
+            "description": "Pastes the last thing you dictated. Older than the recency window, it does an ordinary paste instead."
           }
         },
         "errors": {
           "restore": "Failed to restore original shortcut",
           "set": "Failed to set shortcut: {{error}}",
           "reset": "Failed to reset shortcut to original value"
-        }
+        },
+        "add": "Add another shortcut",
+        "addFirst": "Click to add a shortcut",
+        "remove": "Remove this shortcut"
       },
       "language": {
         "title": "Language",
@@ -200,6 +211,23 @@
       "pttDoubleTapLock": {
         "label": "Double Tap To Lock",
         "description": "Double-tap the shortcut to keep recording hands-free; press it once more to stop"
+      },
+      "cancelOnEditingKeys": {
+        "label": "Ignore Editing Chords",
+        "description": "Drop the recording when Delete, an arrow key, Home or End is pressed while the shortcut is held, so Option+Delete stays text editing"
+      },
+      "pasteLastTranscript": {
+        "title": "Paste Last Transcript"
+      },
+      "pasteLastTranscriptWindow": {
+        "title": "Recency Window",
+        "description": "How recent the last transcript must be for the shortcut to paste it instead of doing an ordinary paste",
+        "minutes": "minutes"
+      },
+      "editingCancelGrace": {
+        "title": "Editing Grace Window",
+        "description": "How long the overlay and the paused music wait before appearing, so a hold that turns out to be an editing chord leaves no trace",
+        "ms": "ms"
       }
     },
     "models": {

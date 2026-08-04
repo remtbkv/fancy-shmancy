@@ -105,6 +105,33 @@ fn should_use_streaming_overlay(style: OverlayStyle, is_streaming: bool) -> bool
     style == OverlayStyle::Live && is_streaming
 }
 
+/// Which recording overlay this session will show. Decided up front so the
+/// choice survives being deferred past the editing-key grace window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecordingOverlayIntent {
+    Streaming,
+    Compact,
+    Hidden,
+}
+
+impl RecordingOverlayIntent {
+    fn of(style: OverlayStyle, model_supports_streaming: bool) -> Self {
+        match style {
+            OverlayStyle::Live if model_supports_streaming => Self::Streaming,
+            OverlayStyle::Live | OverlayStyle::Minimal => Self::Compact,
+            OverlayStyle::None => Self::Hidden,
+        }
+    }
+
+    fn show(self, app: &AppHandle) {
+        match self {
+            Self::Streaming => utils::show_streaming_overlay(app),
+            Self::Compact => show_recording_overlay(app),
+            Self::Hidden => {} // show_overlay_state no-ops on None anyway
+        }
+    }
+}
+
 async fn post_process_transcription(settings: &AppSettings, transcription: &str) -> Option<String> {
     if is_blank_transcription(transcription) {
         debug!("Post-processing skipped because the transcription is empty");
@@ -485,14 +512,23 @@ impl ShortcutAction for TranscribeAction {
         let kickoff_elapsed = kickoff_started.elapsed();
 
         let binding_id = binding_id.to_string();
-        let tray_started = Instant::now();
-        change_tray_icon(app, TrayIconState::Recording);
-        let tray_elapsed = tray_started.elapsed();
 
         // Get the microphone mode to determine audio feedback timing
         let plan_started = Instant::now();
         let settings = get_settings(app);
         let is_always_on = settings.always_on_microphone;
+        // Non-zero while the editing-key guard can still throw this recording
+        // away. Nothing the user can see or hear happens until it elapses, so a
+        // hold that was really Option+Delete never flashes an overlay, never
+        // flips the tray icon and never pauses the music.
+        let quiet_ms = shortcut::editing_guard::quiet_start_ms(&settings);
+        let cancel_generation = rm.cancel_generation();
+
+        let tray_started = Instant::now();
+        if quiet_ms == 0 {
+            change_tray_icon(app, TrayIconState::Recording);
+        }
+        let tray_elapsed = tray_started.elapsed();
 
         let selected_model_info = app
             .state::<Arc<ModelManager>>()
@@ -520,11 +556,11 @@ impl ShortcutAction for TranscribeAction {
         // Sizing the overlay follows the same advertised capability. A model that
         // doesn't stream (or whose capability is not known yet) gets the compact
         // pill instead of an oversized transparent live window.
+        let overlay_intent =
+            RecordingOverlayIntent::of(settings.overlay_style, model_supports_streaming);
         let overlay_started = Instant::now();
-        match settings.overlay_style {
-            OverlayStyle::Live if model_supports_streaming => utils::show_streaming_overlay(app),
-            OverlayStyle::Live | OverlayStyle::Minimal => show_recording_overlay(app),
-            OverlayStyle::None => {} // show_overlay_state no-ops on None anyway
+        if quiet_ms == 0 {
+            overlay_intent.show(app);
         }
         // Everything above runs before capture can begin, so each span here is
         // added keypress->capture latency.
@@ -562,11 +598,18 @@ impl ShortcutAction for TranscribeAction {
             match rm.try_start_recording(&binding_id, vad_policy) {
                 Ok(()) => {
                     debug!("Recording started in {:?}", recording_start_time.elapsed());
-                    // Small delay to ensure microphone stream is active
+                    // Small delay to ensure microphone stream is active. While
+                    // the editing-key guard can still cancel, the start sound
+                    // waits with everything else the user would notice.
                     let app_clone = app.clone();
                     let rm_clone = Arc::clone(&rm);
+                    let feedback_delay = std::cmp::max(100, quiet_ms);
                     std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        std::thread::sleep(std::time::Duration::from_millis(feedback_delay));
+                        if rm_clone.was_cancelled_since(cancel_generation) {
+                            debug!("Recording was dropped before the start sound; staying quiet");
+                            return;
+                        }
                         debug!("Handling delayed audio feedback/mute sequence");
                         // Helper handles disabled audio feedback by returning early, so we reuse it
                         // to keep mute sequencing consistent in every mode.
@@ -585,7 +628,24 @@ impl ShortcutAction for TranscribeAction {
             // Only once the microphone is actually live: a start that failed has
             // nothing to protect, and silencing the user's music for it would be
             // a mystery.
-            media_control::pause_for_recording(app);
+            if quiet_ms == 0 {
+                media_control::pause_for_recording(app);
+            } else {
+                // The guard still has this recording in question. Show up only
+                // if it is still running once the grace window closes.
+                let app_clone = app.clone();
+                let rm_clone = Arc::clone(&rm);
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(quiet_ms));
+                    if rm_clone.was_cancelled_since(cancel_generation) || !rm_clone.is_recording() {
+                        debug!("Recording was dropped during the quiet window; nothing was shown");
+                        return;
+                    }
+                    overlay_intent.show(&app_clone);
+                    change_tray_icon(&app_clone, TrayIconState::Recording);
+                    media_control::pause_for_recording(&app_clone);
+                });
+            }
             // Windows of this recording get transcribed as they complete, so
             // the key coming up only leaves the last one to do.
             tm.begin_ahead_of_stop();
@@ -889,6 +949,173 @@ impl ShortcutAction for CancelAction {
     }
 }
 
+// Stop Recording Action
+struct StopRecordingAction;
+
+impl ShortcutAction for StopRecordingAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        match app.try_state::<TranscriptionCoordinator>() {
+            Some(coordinator) => coordinator.request_stop(),
+            None => warn!("Stop shortcut fired before the coordinator was ready"),
+        }
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        // The shortcut coming back up is not itself an instruction.
+    }
+}
+
+// Paste Last Transcript Action
+struct PasteLastTranscriptAction;
+
+/// The text a history entry would paste: the post-processed version when there
+/// is one, otherwise the raw transcription.
+fn entry_text(entry: &crate::managers::history::HistoryEntry) -> &str {
+    entry
+        .post_processed_text
+        .as_deref()
+        .unwrap_or(&entry.transcription_text)
+}
+
+/// True when a transcript from `timestamp` is still recent enough to be what
+/// "paste the last thing I dictated" means. A window of zero switches the
+/// shortcut off entirely, and a timestamp in the future (a clock change) counts
+/// as recent rather than failing closed.
+fn is_within_window(timestamp: i64, now: i64, window_secs: u64) -> bool {
+    if window_secs == 0 {
+        return false;
+    }
+    let age = now.saturating_sub(timestamp);
+    age <= 0 || (age as u64) <= window_secs
+}
+
+/// The last transcript, if it is recent enough to paste.
+fn recent_transcript(app: &AppHandle, window_secs: u64) -> Option<String> {
+    let history = app.state::<Arc<HistoryManager>>();
+    let entry = match history.get_latest_completed_entry() {
+        Ok(Some(entry)) => entry,
+        Ok(None) => {
+            debug!("No transcript to paste yet");
+            return None;
+        }
+        Err(err) => {
+            error!("Failed to read the last transcript: {}", err);
+            return None;
+        }
+    };
+
+    if !is_within_window(entry.timestamp, chrono::Utc::now().timestamp(), window_secs) {
+        debug!("Last transcript is older than the paste window; passing the keystroke through");
+        return None;
+    }
+
+    let text = entry_text(&entry);
+    (!text.trim().is_empty()).then(|| text.to_string())
+}
+
+/// Set while a shortcut is off the hook for a replay. A second press arriving
+/// mid-flight must not unregister and re-register on top of the first: the
+/// duplicate registration would fail and leave the shortcut dead.
+static PASSING_THROUGH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Hand the chord back to the frontmost application. The shortcut is blocked
+/// from other apps while it is registered, so it has to come off the hook for
+/// the moment the replayed keystroke travels.
+fn pass_shortcut_through(app: &AppHandle, binding_id: &str, shortcut_str: &str) {
+    let Some(binding) = get_settings(app).bindings.get(binding_id).cloned() else {
+        warn!("No binding '{}' to pass through", binding_id);
+        return;
+    };
+
+    if PASSING_THROUGH.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        debug!("Already passing a shortcut through; dropping this press");
+        return;
+    }
+
+    let app = app.clone();
+    let chord = shortcut_str.to_string();
+    std::thread::spawn(move || {
+        // However this ends — a failed replay, a panic — the shortcut goes back
+        // on the hook. A shortcut left unregistered would be silently dead
+        // until the next launch.
+        let _restore = PassThroughGuard {
+            app: app.clone(),
+            binding: binding.clone(),
+        };
+
+        if let Err(e) = shortcut::unregister_shortcut(&app, binding) {
+            warn!("Could not release '{}' to pass it through: {}", chord, e);
+            return;
+        }
+
+        // Long enough for the tap to stop matching before the replay arrives.
+        std::thread::sleep(Duration::from_millis(30));
+
+        let sent = match app.try_state::<crate::input::EnigoState>() {
+            Some(enigo_state) => match enigo_state.0.lock() {
+                Ok(mut enigo) => crate::input::send_chord(&mut enigo, &chord),
+                Err(e) => Err(format!("Failed to lock Enigo: {}", e)),
+            },
+            None => Err("Enigo state not initialized".to_string()),
+        };
+        if let Err(e) = sent {
+            warn!("Could not replay '{}': {}", chord, e);
+        }
+
+        // The replayed keystroke has to be past the tap before the shortcut
+        // goes back on it, or it would come straight back to us.
+        std::thread::sleep(Duration::from_millis(50));
+    });
+}
+
+/// Puts a passed-through shortcut back on the hook and lets the next press
+/// through.
+struct PassThroughGuard {
+    app: AppHandle,
+    binding: crate::settings::ShortcutBinding,
+}
+
+impl Drop for PassThroughGuard {
+    fn drop(&mut self) {
+        if let Err(e) = shortcut::register_shortcut(&self.app, self.binding.clone()) {
+            error!(
+                "Failed to re-register '{}' after passing it through: {}",
+                self.binding.id, e
+            );
+        }
+        PASSING_THROUGH.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl ShortcutAction for PasteLastTranscriptAction {
+    fn start(&self, app: &AppHandle, binding_id: &str, shortcut_str: &str) {
+        let window_secs = get_settings(app).paste_last_transcript_window_secs;
+
+        let Some(text) = recent_transcript(app, window_secs) else {
+            pass_shortcut_through(app, binding_id, shortcut_str);
+            return;
+        };
+
+        let app_clone = app.clone();
+        if let Err(e) = app.run_on_main_thread(move || {
+            // Never auto-submits: this is a re-paste, not a fresh dictation.
+            if let Err(e) = utils::paste_with_auto_submit(text, app_clone.clone(), false) {
+                error!("Failed to paste the last transcript: {}", e);
+                let _ = app_clone.emit("paste-error", ());
+            }
+        }) {
+            error!(
+                "Failed to paste the last transcript on the main thread: {:?}",
+                e
+            );
+        }
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        // Nothing to do on release
+    }
+}
+
 // Test Action
 struct TestAction;
 
@@ -930,6 +1157,14 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
         Arc::new(CancelAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
+        "stop_recording".to_string(),
+        Arc::new(StopRecordingAction) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
+        "paste_last_transcript".to_string(),
+        Arc::new(PasteLastTranscriptAction) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
         "test".to_string(),
         Arc::new(TestAction) as Arc<dyn ShortcutAction>,
     );
@@ -938,13 +1173,44 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
 
 #[cfg(test)]
 mod tests {
-    use super::{complete_unless_cancelled, is_blank_transcription, should_use_streaming_overlay};
+    use super::{
+        complete_unless_cancelled, is_blank_transcription, is_within_window,
+        should_use_streaming_overlay,
+    };
     use crate::settings::OverlayStyle;
     use std::future;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
+
+    #[test]
+    fn a_transcript_inside_the_window_is_pasteable() {
+        let now = 1_000_000;
+        assert!(is_within_window(now - 299, now, 300));
+        assert!(is_within_window(now - 300, now, 300));
+    }
+
+    #[test]
+    fn an_older_transcript_falls_back_to_a_normal_paste() {
+        let now = 1_000_000;
+        assert!(!is_within_window(now - 301, now, 300));
+        assert!(!is_within_window(now - 86_400, now, 300));
+    }
+
+    #[test]
+    fn a_zero_window_turns_the_shortcut_into_a_plain_paste() {
+        let now = 1_000_000;
+        assert!(!is_within_window(now, now, 0));
+    }
+
+    /// A clock that moved backwards leaves a transcript stamped in the future.
+    /// It is still the last thing dictated, so it stays pasteable.
+    #[test]
+    fn a_future_timestamp_still_counts_as_recent() {
+        let now = 1_000_000;
+        assert!(is_within_window(now + 500, now, 300));
+    }
 
     #[test]
     fn blank_transcription_is_detected() {

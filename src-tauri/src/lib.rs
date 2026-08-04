@@ -625,9 +625,13 @@ pub fn run(cli_args: CliArgs) {
     let specta_builder = Builder::<tauri::Wry>::new()
         .commands(collect_commands![
             shortcut::change_binding,
+            shortcut::set_binding_shortcuts,
             shortcut::reset_binding,
             shortcut::change_ptt_setting,
             shortcut::change_ptt_double_tap_lock_setting,
+            shortcut::change_cancel_on_editing_keys_setting,
+            shortcut::change_editing_cancel_grace_ms_setting,
+            shortcut::change_paste_last_transcript_window_setting,
             shortcut::change_audio_feedback_setting,
             shortcut::change_audio_feedback_volume_setting,
             shortcut::change_sound_theme_setting,

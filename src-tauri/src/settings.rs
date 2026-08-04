@@ -84,6 +84,27 @@ pub struct ShortcutBinding {
     pub description: String,
     pub default_binding: String,
     pub current_binding: String,
+    /// Further shortcuts that trigger the same action, so one action can be
+    /// reached from a key and, say, a mouse side button. Stores written before
+    /// this field existed deserialize with an empty list.
+    #[serde(default)]
+    pub extra_bindings: Vec<String>,
+}
+
+impl ShortcutBinding {
+    /// Every shortcut that should be registered for this action: the primary
+    /// one first, then the extras. An empty string means "unbound" and is
+    /// dropped, as are duplicates.
+    pub fn shortcuts(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::with_capacity(1 + self.extra_bindings.len());
+        for raw in std::iter::once(&self.current_binding).chain(self.extra_bindings.iter()) {
+            let shortcut = raw.trim();
+            if !shortcut.is_empty() && !out.iter().any(|existing| existing == shortcut) {
+                out.push(shortcut.to_string());
+            }
+        }
+        out
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Type)]
@@ -353,6 +374,25 @@ pub struct AppSettings {
     /// recording on until the shortcut is pressed again.
     #[serde(default)]
     pub ptt_double_tap_lock: bool,
+    /// Throw the recording away when an editing key is pressed while the
+    /// transcribe shortcut is held. A held modifier that doubles as the
+    /// shortcut (right Option, say) is also half of Option+Delete and
+    /// Option+Arrow, and those presses mean text editing, not dictation.
+    #[serde(default = "default_cancel_on_editing_keys")]
+    pub cancel_on_editing_keys: bool,
+    /// Keys that abandon the recording while `cancel_on_editing_keys` is on,
+    /// in handy-keys names (`backspace`, `left`, …).
+    #[serde(default = "default_editing_cancel_keys")]
+    pub editing_cancel_keys: Vec<String>,
+    /// How long after the shortcut goes down an editing key still counts as
+    /// "this was never dictation": inside this window the cancel is silent and
+    /// the overlay never appears, so Option+Delete leaves no trace on screen.
+    #[serde(default = "default_editing_cancel_grace_ms")]
+    pub editing_cancel_grace_ms: u64,
+    /// How recent the last transcript must be for the paste-last-transcript
+    /// shortcut to paste it instead of passing a normal paste through.
+    #[serde(default = "default_paste_last_transcript_window_secs")]
+    pub paste_last_transcript_window_secs: u64,
     #[serde(default)]
     pub audio_feedback: bool,
     #[serde(default = "default_audio_feedback_volume")]
@@ -488,6 +528,40 @@ fn default_push_to_talk() -> bool {
 
 fn default_always_on_microphone() -> bool {
     false
+}
+
+fn default_cancel_on_editing_keys() -> bool {
+    true
+}
+
+/// Backspace, forward delete and the four arrows: the keys that only make sense
+/// as text editing, so pressing one while the shortcut is held means the hold
+/// was Option+Delete or Option+Arrow, not the start of a dictation.
+fn default_editing_cancel_keys() -> Vec<String> {
+    [
+        "backspace",
+        "forwarddelete",
+        "left",
+        "right",
+        "up",
+        "down",
+        "home",
+        "end",
+    ]
+    .iter()
+    .map(|key| key.to_string())
+    .collect()
+}
+
+/// Long enough to cover the gap between the modifier and the Delete in a
+/// deliberate Option+Delete, short enough that the overlay still feels
+/// immediate when the hold really is a dictation.
+fn default_editing_cancel_grace_ms() -> u64 {
+    250
+}
+
+fn default_paste_last_transcript_window_secs() -> u64 {
+    300
 }
 
 fn default_translate_to_english() -> bool {
@@ -815,6 +889,7 @@ pub fn get_default_settings() -> AppSettings {
             description: "Converts your speech into text.".to_string(),
             default_binding: default_shortcut.to_string(),
             current_binding: default_shortcut.to_string(),
+            extra_bindings: Vec::new(),
         },
     );
     #[cfg(target_os = "windows")]
@@ -835,6 +910,7 @@ pub fn get_default_settings() -> AppSettings {
                 .to_string(),
             default_binding: default_post_process_shortcut.to_string(),
             current_binding: default_post_process_shortcut.to_string(),
+            extra_bindings: Vec::new(),
         },
     );
     bindings.insert(
@@ -845,6 +921,38 @@ pub fn get_default_settings() -> AppSettings {
             description: "Cancels the current recording.".to_string(),
             default_binding: "escape".to_string(),
             current_binding: "escape".to_string(),
+            extra_bindings: Vec::new(),
+        },
+    );
+    // Unbound by default: holding the transcribe shortcut already ends the
+    // recording on release, so this only earns its keep for hands-free use.
+    bindings.insert(
+        "stop_recording".to_string(),
+        ShortcutBinding {
+            id: "stop_recording".to_string(),
+            name: "Stop recording".to_string(),
+            description: "Ends the recording in progress and transcribes it.".to_string(),
+            default_binding: String::new(),
+            current_binding: String::new(),
+            extra_bindings: Vec::new(),
+        },
+    );
+    #[cfg(target_os = "macos")]
+    let default_paste_last_shortcut = "command+shift+v";
+    #[cfg(not(target_os = "macos"))]
+    let default_paste_last_shortcut = "ctrl+shift+v";
+
+    bindings.insert(
+        "paste_last_transcript".to_string(),
+        ShortcutBinding {
+            id: "paste_last_transcript".to_string(),
+            name: "Paste last transcript".to_string(),
+            description: "Pastes the last thing you dictated. Falls back to a normal paste when \
+                          the last transcript is older than the recency window."
+                .to_string(),
+            default_binding: default_paste_last_shortcut.to_string(),
+            current_binding: default_paste_last_shortcut.to_string(),
+            extra_bindings: Vec::new(),
         },
     );
 
@@ -853,6 +961,10 @@ pub fn get_default_settings() -> AppSettings {
         bindings,
         push_to_talk: default_push_to_talk(),
         ptt_double_tap_lock: false,
+        cancel_on_editing_keys: default_cancel_on_editing_keys(),
+        editing_cancel_keys: default_editing_cancel_keys(),
+        editing_cancel_grace_ms: default_editing_cancel_grace_ms(),
+        paste_last_transcript_window_secs: default_paste_last_transcript_window_secs(),
         audio_feedback: false,
         audio_feedback_volume: default_audio_feedback_volume(),
         sound_theme: default_sound_theme(),
@@ -1135,6 +1247,55 @@ mod tests {
 
     fn default_settings_json() -> serde_json::Value {
         serde_json::to_value(get_default_settings()).unwrap()
+    }
+
+    fn binding_with(current: &str, extras: &[&str]) -> ShortcutBinding {
+        ShortcutBinding {
+            id: "transcribe".into(),
+            name: "Transcribe".into(),
+            description: String::new(),
+            default_binding: "option+space".into(),
+            current_binding: current.into(),
+            extra_bindings: extras.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn a_binding_registers_its_primary_shortcut_first() {
+        assert_eq!(
+            binding_with("option_right", &["mouse4"]).shortcuts(),
+            vec!["option_right".to_string(), "mouse4".to_string()]
+        );
+    }
+
+    #[test]
+    fn blank_and_repeated_shortcuts_are_dropped() {
+        assert_eq!(
+            binding_with("option_right", &["", "  ", "option_right", "f13"]).shortcuts(),
+            vec!["option_right".to_string(), "f13".to_string()]
+        );
+    }
+
+    /// An action with no shortcut at all is unbound, not an error: the
+    /// stop-recording action ships that way.
+    #[test]
+    fn an_unbound_binding_has_nothing_to_register() {
+        assert!(binding_with("", &[]).shortcuts().is_empty());
+    }
+
+    /// Stores written before alternates existed must still load.
+    #[test]
+    fn a_binding_without_extras_deserializes() {
+        let binding: ShortcutBinding = serde_json::from_value(serde_json::json!({
+            "id": "transcribe",
+            "name": "Transcribe",
+            "description": "",
+            "default_binding": "option+space",
+            "current_binding": "f13",
+        }))
+        .expect("extra_bindings must default");
+        assert!(binding.extra_bindings.is_empty());
+        assert_eq!(binding.shortcuts(), vec!["f13".to_string()]);
     }
 
     /// Every field must survive a partial store: a missing key must never fail

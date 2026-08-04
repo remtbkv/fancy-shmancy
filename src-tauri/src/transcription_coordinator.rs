@@ -66,6 +66,9 @@ enum Command {
     Cancel {
         recording_was_active: bool,
     },
+    /// End the recording in progress from somewhere other than the shortcut
+    /// that started it (the stop-recording shortcut, the tray, a signal).
+    StopRequest,
     ProcessingFinished,
 }
 
@@ -197,6 +200,13 @@ impl TranscriptionCoordinator {
                             push_to_talk,
                             double_tap_lock,
                         } => {
+                            // The shortcut is up: an arrow key from here on is
+                            // navigation, not a sign this hold was really an
+                            // editing chord.
+                            if !is_pressed {
+                                crate::shortcut::editing_guard::disarm();
+                            }
+
                             let lock_enabled = push_to_talk && double_tap_lock;
                             let recording_binding = match &stage {
                                 Stage::Recording(id) => Some(id.clone()),
@@ -232,6 +242,10 @@ impl TranscriptionCoordinator {
                                 LockAction::Engage => {
                                     pending_release = None;
                                     locked = true;
+                                    // Hands-free from here: nothing is being
+                                    // held, so nothing can turn out to have
+                                    // been an editing chord.
+                                    crate::shortcut::editing_guard::disarm();
                                     debug!("Double tap latched recording for '{binding_id}'");
                                     // The cancel key stays registered here. It is
                                     // held for the whole latched session, which
@@ -273,6 +287,10 @@ impl TranscriptionCoordinator {
                                             "Press for '{binding_id}' absorbed as key repeat, not a double tap"
                                         );
                                     }
+                                    // The key never came up, so the hold — and
+                                    // the chance it is really an editing chord
+                                    // — is still on.
+                                    crate::shortcut::editing_guard::rearm();
                                     pending_release = None;
                                     continue;
                                 }
@@ -337,11 +355,22 @@ impl TranscriptionCoordinator {
                                 }
                             }
                         }
+                        Command::StopRequest => {
+                            pending_release = None;
+                            locked = false;
+                            if let Stage::Recording(id) = &stage {
+                                let binding_id = id.clone();
+                                stop(&app, &mut stage, &binding_id, "stop shortcut");
+                            } else {
+                                debug!("Stop requested with no recording in progress");
+                            }
+                        }
                         Command::Cancel {
                             recording_was_active,
                         } => {
                             pending_release = None;
                             locked = false;
+                            crate::shortcut::editing_guard::disarm();
                             // Don't reset during processing — wait for the pipeline to finish.
                             if !matches!(stage, Stage::Processing)
                                 && (recording_was_active || matches!(stage, Stage::Recording(_)))
@@ -352,6 +381,7 @@ impl TranscriptionCoordinator {
                         Command::ProcessingFinished => {
                             stage = Stage::Idle;
                             locked = false;
+                            crate::shortcut::editing_guard::disarm();
                         }
                     }
                 }
@@ -390,6 +420,13 @@ impl TranscriptionCoordinator {
         }
     }
 
+    /// End the recording in progress, if there is one, and transcribe it.
+    pub fn request_stop(&self) {
+        if self.tx.send(Command::StopRequest).is_err() {
+            warn!("Transcription coordinator channel closed");
+        }
+    }
+
     pub fn notify_cancel(&self, recording_was_active: bool) {
         if self
             .tx
@@ -414,6 +451,9 @@ fn start(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &s
         warn!("No action in ACTION_MAP for '{binding_id}'");
         return;
     };
+    // Armed before the action runs: the editing key can land while the
+    // microphone is still opening.
+    crate::shortcut::editing_guard::arm(&crate::settings::get_settings(app));
     action.start(app, binding_id, hotkey_string);
     if app
         .try_state::<Arc<AudioRecordingManager>>()
@@ -421,6 +461,7 @@ fn start(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &s
     {
         *stage = Stage::Recording(binding_id.to_string());
     } else {
+        crate::shortcut::editing_guard::disarm();
         debug!("Start for '{binding_id}' did not begin recording; staying idle");
     }
 }
@@ -430,6 +471,7 @@ fn stop(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &st
         warn!("No action in ACTION_MAP for '{binding_id}'");
         return;
     };
+    crate::shortcut::editing_guard::disarm();
     action.stop(app, binding_id, hotkey_string);
     *stage = Stage::Processing;
 }
