@@ -168,7 +168,7 @@
         "pressKeys": "Press keys...",
         "bindings": {
           "transcribe": {
-            "name": "Transcribe",
+            "name": "Push",
             "description": "The keyboard shortcut to record and transcribe your voice."
           },
           "cancel": {
@@ -188,7 +188,7 @@
             "description": "Pastes the last thing you dictated. Older than the recency window, it does an ordinary paste instead."
           },
           "transcribe_hands_free": {
-            "name": "Hands-Free",
+            "name": "Hold",
             "description": "Press once to start recording, press again to stop — no holding. Made for a mouse button."
           },
           "submit_transcription": {

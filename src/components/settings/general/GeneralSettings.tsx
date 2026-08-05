@@ -5,7 +5,6 @@ import { MicrophoneSelector } from "../MicrophoneSelector";
 import { ShortcutInput } from "../ShortcutInput";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { OutputDeviceSelector } from "../OutputDeviceSelector";
-import { PushToTalk } from "../PushToTalk";
 import { PttDoubleTapLock } from "../PttDoubleTapLock";
 import { CancelOnEditingKeys } from "../CancelOnEditingKeys";
 import { EditingCancelGrace } from "../EditingCancelGrace";
@@ -13,7 +12,6 @@ import { PasteLastTranscriptWindow } from "../PasteLastTranscriptWindow";
 import { AudioFeedback } from "../AudioFeedback";
 import { useSettings } from "../../../hooks/useSettings";
 import { VolumeSlider } from "../VolumeSlider";
-import { MuteWhileRecording } from "../MuteWhileRecording";
 import { PausePlaybackWhileRecording } from "../PausePlaybackWhileRecording";
 import { ModelSettingsCard } from "./ModelSettingsCard";
 
@@ -28,7 +26,6 @@ export const GeneralSettings: React.FC = () => {
       <SettingsGroup title={t("settings.general.shortcuts.title")}>
         <ShortcutInput shortcutId="transcribe" grouped={true} />
         <ShortcutInput shortcutId="transcribe_hands_free" grouped={true} />
-        <ShortcutInput shortcutId="stop_recording" grouped={true} />
         <ShortcutInput shortcutId="submit_transcription" grouped={true} />
         <ShortcutInput shortcutId="paste_last_transcript" grouped={true} />
         {/* Cancel shortcut is hidden with push-to-talk (release key cancels) and on Linux (dynamic shortcut instability) */}
@@ -37,7 +34,6 @@ export const GeneralSettings: React.FC = () => {
         )}
       </SettingsGroup>
       <SettingsGroup title={t("settings.general.title")}>
-        <PushToTalk descriptionMode="tooltip" grouped={true} />
         {pushToTalk && (
           <PttDoubleTapLock descriptionMode="tooltip" grouped={true} />
         )}
@@ -55,7 +51,6 @@ export const GeneralSettings: React.FC = () => {
       <ModelSettingsCard />
       <SettingsGroup title={t("settings.sound.title")}>
         <MicrophoneSelector descriptionMode="tooltip" grouped={true} />
-        <MuteWhileRecording descriptionMode="tooltip" grouped={true} />
         <PausePlaybackWhileRecording descriptionMode="tooltip" grouped={true} />
         <AudioFeedback descriptionMode="tooltip" grouped={true} />
         <OutputDeviceSelector
