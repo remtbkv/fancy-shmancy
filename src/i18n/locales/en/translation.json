@@ -417,7 +417,7 @@
       },
       "typedOutApps": {
         "title": "Type Transcripts Out In",
-        "description": "Apps that get the transcript typed out instead of dropped in at once, by bundle identifier. Claude's composer turns a big paste into an attachment, so it needs typing; everywhere else lands instantly.",
+        "description": "Apps that get the transcript typed out instead of dropped in at once, by bundle identifier. Use it for anything whose input turns a big paste into an attachment; everywhere else lands instantly.",
         "placeholder": "com.example.app",
         "add": "Add",
         "addLast": "+ {{app}} (last pasted into)",

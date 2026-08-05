@@ -569,11 +569,10 @@ fn default_paste_last_transcript_window_secs() -> u64 {
     300
 }
 
-/// Claude's composer turns a big paste into a "pasted text" attachment, so a
-/// transcript has to arrive as typing to stay editable text. Nothing else is
-/// assumed — the list is the setting.
+/// Empty by default: an app only needs typing when its input turns a big paste
+/// into an attachment, and which apps those are is the user's to say.
 fn default_typed_out_apps() -> Vec<String> {
-    vec!["com.anthropic.claudefordesktop".to_string()]
+    Vec::new()
 }
 
 fn default_translate_to_english() -> bool {
