@@ -102,6 +102,7 @@ const settingUpdaters: {
     commands.changeEditingCancelGraceMsSetting(value as number),
   paste_last_transcript_window_secs: (value) =>
     commands.changePasteLastTranscriptWindowSetting(value as number),
+  typed_out_apps: (value) => commands.updateTypedOutApps(value as string[]),
   selected_microphone: (value) =>
     commands.setSelectedMicrophone(
       (value as string) === "Default" || value === null

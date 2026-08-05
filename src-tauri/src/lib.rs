@@ -13,6 +13,7 @@ mod llm_client;
 mod managers;
 mod media_control;
 mod overlay;
+mod paste_target;
 pub mod portable;
 mod settings;
 mod shortcut;
@@ -632,6 +633,8 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_cancel_on_editing_keys_setting,
             shortcut::change_editing_cancel_grace_ms_setting,
             shortcut::change_paste_last_transcript_window_setting,
+            shortcut::update_typed_out_apps,
+            shortcut::get_last_paste_target,
             shortcut::change_audio_feedback_setting,
             shortcut::change_audio_feedback_volume_setting,
             shortcut::change_sound_theme_setting,

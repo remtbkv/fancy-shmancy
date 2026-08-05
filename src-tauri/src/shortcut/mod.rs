@@ -569,6 +569,27 @@ pub fn change_editing_cancel_grace_ms_setting(app: AppHandle, ms: u64) -> Result
 
 #[tauri::command]
 #[specta::specta]
+pub fn update_typed_out_apps(app: AppHandle, apps: Vec<String>) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.typed_out_apps = apps
+        .into_iter()
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+        .collect();
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// The app the last transcript was typed into. Bundle identifiers are not
+/// something anyone knows by heart, so the settings UI offers this one.
+#[tauri::command]
+#[specta::specta]
+pub fn get_last_paste_target() -> Option<String> {
+    crate::paste_target::last_target()
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_paste_last_transcript_window_setting(
     app: AppHandle,
     seconds: u64,

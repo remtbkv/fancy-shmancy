@@ -393,6 +393,11 @@ pub struct AppSettings {
     /// shortcut to paste it instead of passing a normal paste through.
     #[serde(default = "default_paste_last_transcript_window_secs")]
     pub paste_last_transcript_window_secs: u64,
+    /// Bundle identifiers of apps that get the transcript typed out instead of
+    /// dropped in one go, because a large paste there collapses into an
+    /// attachment rather than staying text.
+    #[serde(default = "default_typed_out_apps")]
+    pub typed_out_apps: Vec<String>,
     #[serde(default)]
     pub audio_feedback: bool,
     #[serde(default = "default_audio_feedback_volume")]
@@ -562,6 +567,13 @@ fn default_editing_cancel_grace_ms() -> u64 {
 
 fn default_paste_last_transcript_window_secs() -> u64 {
     300
+}
+
+/// Claude's composer turns a big paste into a "pasted text" attachment, so a
+/// transcript has to arrive as typing to stay editable text. Nothing else is
+/// assumed — the list is the setting.
+fn default_typed_out_apps() -> Vec<String> {
+    vec!["com.anthropic.claudefordesktop".to_string()]
 }
 
 fn default_translate_to_english() -> bool {
@@ -993,6 +1005,7 @@ pub fn get_default_settings() -> AppSettings {
         editing_cancel_keys: default_editing_cancel_keys(),
         editing_cancel_grace_ms: default_editing_cancel_grace_ms(),
         paste_last_transcript_window_secs: default_paste_last_transcript_window_secs(),
+        typed_out_apps: default_typed_out_apps(),
         audio_feedback: false,
         audio_feedback_volume: default_audio_feedback_volume(),
         sound_theme: default_sound_theme(),

@@ -2465,6 +2465,7 @@ dependencies = [
  "hound",
  "log",
  "natural",
+ "objc2-app-kit",
  "objc2-core-audio",
  "objc2-core-foundation",
  "once_cell",

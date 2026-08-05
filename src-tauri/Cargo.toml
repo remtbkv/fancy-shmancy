@@ -143,6 +143,13 @@ tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.
 # what is playing.
 objc2-core-audio = { version = "0.3.2", features = ["AudioHardware"] }
 objc2-core-foundation = { version = "0.3.2", features = ["CFBase", "CFString"] }
+# Which app the text is about to land in, so a transcript can be typed out
+# where a big paste would collapse into an attachment and dropped in one go
+# everywhere else.
+objc2-app-kit = { version = "0.3.2", features = [
+  "NSWorkspace",
+  "NSRunningApplication",
+] }
 transcribe-cpp = { version = "0.1.3", default-features = false, features = ["metal"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

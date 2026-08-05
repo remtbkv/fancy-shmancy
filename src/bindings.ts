@@ -61,6 +61,17 @@ async changeEditingCancelGraceMsSetting(ms: number) : Promise<Result<null, strin
     else return { status: "error", error: e  as any };
 }
 },
+async updateTypedOutApps(apps: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_typed_out_apps", { apps }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getLastPasteTarget() : Promise<string | null> {
+    return await TAURI_INVOKE("get_last_paste_target");
+},
 async changePasteLastTranscriptWindowSetting(seconds: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_paste_last_transcript_window_setting", { seconds }) };
@@ -954,7 +965,7 @@ settings_schema_version?: number;
  * Defaults to empty on partial stores; the load path merges in the
  * default bindings for any missing keys before the settings are used.
  */
-bindings?: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk?: boolean; ptt_double_tap_lock?: boolean; cancel_on_editing_keys?: boolean; editing_cancel_keys?: string[]; editing_cancel_grace_ms?: number; paste_last_transcript_window_secs?: number; audio_feedback?: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; show_whats_new_on_update?: boolean; 
+bindings?: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk?: boolean; ptt_double_tap_lock?: boolean; cancel_on_editing_keys?: boolean; editing_cancel_keys?: string[]; editing_cancel_grace_ms?: number; paste_last_transcript_window_secs?: number; typed_out_apps?: string[]; audio_feedback?: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; show_whats_new_on_update?: boolean; 
 /**
  * The app version whose What's New the user has already seen. Fresh installs
  * default to the current version (nothing is "new" to them). Existing users

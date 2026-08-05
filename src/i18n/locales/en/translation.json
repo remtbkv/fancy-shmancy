@@ -411,6 +411,15 @@
       "voiceActivityDetection": {
         "title": "Voice Activity Detection",
         "description": "Filter silence from recordings. Streaming-capable models use a longer VAD tail; disabling VAD records raw audio."
+      },
+      "typedOutApps": {
+        "title": "Type Transcripts Out In",
+        "description": "Apps that get the transcript typed out instead of dropped in at once, by bundle identifier. Claude's composer turns a big paste into an attachment, so it needs typing; everywhere else lands instantly.",
+        "placeholder": "com.example.app",
+        "add": "Add",
+        "addLast": "+ {{app}} (last pasted into)",
+        "remove": "Remove {{app}}",
+        "duplicate": "That app is already on the list"
       }
     },
     "postProcessing": {
