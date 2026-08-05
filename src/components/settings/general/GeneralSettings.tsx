@@ -25,11 +25,18 @@ export const GeneralSettings: React.FC = () => {
   const isLinux = type() === "linux";
   return (
     <div className="max-w-3xl w-full mx-auto space-y-6">
-      <SettingsGroup title={t("settings.general.title")}>
+      <SettingsGroup title={t("settings.general.shortcuts.title")}>
         <ShortcutInput shortcutId="transcribe" grouped={true} />
         <ShortcutInput shortcutId="transcribe_hands_free" grouped={true} />
         <ShortcutInput shortcutId="stop_recording" grouped={true} />
         <ShortcutInput shortcutId="submit_transcription" grouped={true} />
+        <ShortcutInput shortcutId="paste_last_transcript" grouped={true} />
+        {/* Cancel shortcut is hidden with push-to-talk (release key cancels) and on Linux (dynamic shortcut instability) */}
+        {!isLinux && !pushToTalk && (
+          <ShortcutInput shortcutId="cancel" grouped={true} />
+        )}
+      </SettingsGroup>
+      <SettingsGroup title={t("settings.general.title")}>
         <PushToTalk descriptionMode="tooltip" grouped={true} />
         {pushToTalk && (
           <PttDoubleTapLock descriptionMode="tooltip" grouped={true} />
@@ -41,13 +48,8 @@ export const GeneralSettings: React.FC = () => {
         {pushToTalk && cancelOnEditingKeys && (
           <EditingCancelGrace descriptionMode="tooltip" grouped={true} />
         )}
-        {/* Cancel shortcut is hidden with push-to-talk (release key cancels) and on Linux (dynamic shortcut instability) */}
-        {!isLinux && !pushToTalk && (
-          <ShortcutInput shortcutId="cancel" grouped={true} />
-        )}
       </SettingsGroup>
       <SettingsGroup title={t("settings.general.pasteLastTranscript.title")}>
-        <ShortcutInput shortcutId="paste_last_transcript" grouped={true} />
         <PasteLastTranscriptWindow descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
       <ModelSettingsCard />
