@@ -548,6 +548,7 @@ fn paste_via_external_script(text: &str, script_path: &str) -> Result<(), String
 fn paste_direct(
     enigo: &mut Enigo,
     text: &str,
+    style: TypingStyle,
     #[cfg(target_os = "linux")] typing_tool: TypingTool,
 ) -> Result<(), String> {
     #[cfg(target_os = "linux")]
@@ -558,7 +559,10 @@ fn paste_direct(
         info!("Falling back to enigo for direct text input");
     }
 
-    input::paste_text_direct(enigo, text)
+    match style {
+        TypingStyle::TypedOut => input::paste_text_direct(enigo, text),
+        TypingStyle::AllAtOnce => input::paste_text_at_once(enigo, text),
+    }
 }
 
 fn send_return_key(enigo: &mut Enigo, key_type: AutoSubmitKey) -> Result<(), String> {
@@ -604,6 +608,17 @@ fn send_return_key(enigo: &mut Enigo, key_type: AutoSubmitKey) -> Result<(), Str
     Ok(())
 }
 
+/// How the text lands when the paste method types it directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypingStyle {
+    /// In chunks, the way a dictation arrives — it stays editable as it lands
+    /// and reads as writing rather than a drop of text.
+    TypedOut,
+    /// In one go. A transcript being re-pasted was already dictated once;
+    /// watching it type itself out again is only a wait.
+    AllAtOnce,
+}
+
 /// Whether this paste ends with the submit key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SubmitIntent {
@@ -645,11 +660,12 @@ pub fn send_submit_key(app_handle: &AppHandle) -> Result<(), String> {
     send_return_key(&mut enigo, key)
 }
 
-/// Paste, choosing whether the submit key follows.
+/// Paste, choosing how the text lands and whether the submit key follows.
 pub fn paste_with_submit(
     text: String,
     app_handle: AppHandle,
     submit: SubmitIntent,
+    style: TypingStyle,
 ) -> Result<(), String> {
     let settings = get_settings(&app_handle);
     let paste_method = settings.paste_method;
@@ -686,6 +702,7 @@ pub fn paste_with_submit(
             paste_direct(
                 &mut enigo,
                 &text,
+                style,
                 #[cfg(target_os = "linux")]
                 settings.typing_tool,
             )?;

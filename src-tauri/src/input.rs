@@ -234,6 +234,26 @@ fn named_key(name: &str) -> Option<Key> {
     Some(key)
 }
 
+/// Send the whole text in one go, no chunking. A transcript being re-pasted is
+/// not being dictated now, so watching it type itself out again is just a wait.
+pub fn paste_text_at_once(enigo: &mut Enigo, text: &str) -> Result<(), String> {
+    for (index, line) in text
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .split('\n')
+        .enumerate()
+    {
+        if index > 0 {
+            send_soft_newline(enigo)?;
+        }
+        enigo
+            .text(line)
+            .map_err(|e| format!("Failed to send text directly: {}", e))?;
+    }
+
+    Ok(())
+}
+
 /// Pastes text directly using the enigo text method.
 /// This tries to use system input methods if possible, otherwise simulates keystrokes one by one.
 pub fn paste_text_direct(enigo: &mut Enigo, text: &str) -> Result<(), String> {

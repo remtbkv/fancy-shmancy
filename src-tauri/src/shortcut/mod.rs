@@ -203,6 +203,18 @@ pub fn set_binding_shortcuts(
         });
     }
 
+    // A shortcut can only drive one action. Say which one has it rather than
+    // letting the registration fail later with "already registered".
+    if let Some((shortcut, owner)) = shortcuts.iter().find_map(|shortcut| {
+        settings
+            .bindings
+            .values()
+            .find(|other| other.id != id && other.shortcuts().contains(shortcut))
+            .map(|other| (shortcut.clone(), other.name.clone()))
+    }) {
+        return Err(format!("{} is already used by {}", shortcut, owner));
+    }
+
     // Unregister the existing binding
     if let Err(e) = unregister_shortcut(&app, binding_to_modify) {
         let error_msg = format!("Failed to unregister shortcut: {}", e);

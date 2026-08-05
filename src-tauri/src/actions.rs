@@ -881,6 +881,7 @@ impl ShortcutAction for TranscribeAction {
                                         final_text,
                                         ah_clone.clone(),
                                         submit,
+                                        crate::clipboard::TypingStyle::TypedOut,
                                     ) {
                                         Ok(()) => debug!(
                                             "Text pasted successfully in {:?}",
@@ -1159,11 +1160,13 @@ impl ShortcutAction for PasteLastTranscriptAction {
 
         let app_clone = app.clone();
         if let Err(e) = app.run_on_main_thread(move || {
-            // Never auto-submits: this is a re-paste, not a fresh dictation.
+            // Lands in one go and never auto-submits: this is a re-paste, not
+            // a fresh dictation.
             if let Err(e) = utils::paste_with_submit(
                 text,
                 app_clone.clone(),
                 crate::clipboard::SubmitIntent::Never,
+                crate::clipboard::TypingStyle::AllAtOnce,
             ) {
                 error!("Failed to paste the last transcript: {}", e);
                 let _ = app_clone.emit("paste-error", ());

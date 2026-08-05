@@ -438,6 +438,16 @@ impl HandyKeysState {
                         .unwrap_or_default(),
                 };
 
+                // Worth a line each: when a shortcut "won't set", this is the
+                // only place that says what the app actually saw the user press.
+                debug!(
+                    "recording captured: '{}' (down={}, modifiers={:?}, key={:?})",
+                    frontend_event.hotkey_string,
+                    frontend_event.is_key_down,
+                    frontend_event.modifiers,
+                    frontend_event.key
+                );
+
                 // Emit to frontend
                 if let Err(e) = app.emit("handy-keys-event", &frontend_event) {
                     error!("Failed to emit key event: {}", e);
