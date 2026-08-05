@@ -37,12 +37,16 @@ pub fn handle_shortcut_event(
     // Transcribe bindings are handled by the coordinator.
     if is_transcribe_binding(binding_id) {
         if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
+            // The hands-free shortcut is a toggle by definition, so it ignores
+            // both the push-to-talk setting and the double-tap latch built on
+            // top of it.
+            let hands_free = crate::transcription_coordinator::is_hands_free_binding(binding_id);
             coordinator.send_input(
                 binding_id,
                 hotkey_string,
                 is_pressed,
-                settings.push_to_talk,
-                settings.ptt_double_tap_lock,
+                settings.push_to_talk && !hands_free,
+                settings.ptt_double_tap_lock && !hands_free,
             );
         } else {
             warn!("TranscriptionCoordinator is not initialized");

@@ -59,9 +59,10 @@ fn parse_cancel_keys(names: &[String]) -> Vec<Key> {
 
 /// How long the visible and audible parts of a recording are held back so a
 /// hold that turns out to be Option+Delete leaves nothing on screen. Zero when
-/// the guard cannot cancel this recording anyway.
+/// the guard cannot cancel this recording anyway — a hands-free or scripted
+/// start has no held shortcut to reinterpret, so it shows up at once.
 pub fn quiet_start_ms(settings: &AppSettings) -> u64 {
-    if is_enabled(settings) {
+    if is_enabled(settings) && GUARD.armed.load(Ordering::SeqCst) {
         settings.editing_cancel_grace_ms
     } else {
         0
@@ -240,9 +241,19 @@ mod tests {
         assert_eq!(quiet_start_ms(&settings_with(true, false, 400)), 0);
     }
 
+    /// Only a recording the guard could still throw away waits before showing
+    /// itself. A hands-free start arms nothing, so its overlay is immediate.
     #[test]
     fn quiet_start_only_applies_while_the_guard_is_live() {
-        assert_eq!(quiet_start_ms(&settings_with(true, true, 400)), 400);
+        let settings = settings_with(true, true, 400);
+
+        disarm();
+        assert_eq!(quiet_start_ms(&settings), 0);
+
+        arm(&settings);
+        assert_eq!(quiet_start_ms(&settings), 400);
         assert_eq!(quiet_start_ms(&settings_with(false, true, 400)), 0);
+
+        disarm();
     }
 }

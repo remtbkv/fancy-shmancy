@@ -604,21 +604,52 @@ fn send_return_key(enigo: &mut Enigo, key_type: AutoSubmitKey) -> Result<(), Str
     Ok(())
 }
 
-fn should_send_auto_submit(auto_submit: bool, paste_method: PasteMethod) -> bool {
-    auto_submit && paste_method != PasteMethod::None
+/// Whether this paste ends with the submit key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubmitIntent {
+    /// Follow the auto-submit setting, as an ordinary dictation does.
+    FollowSetting,
+    /// Send it regardless: the user asked for this one to go (finish and send).
+    Always,
+    /// Never — re-pasting an earlier transcript is not a fresh dictation, so it
+    /// must not fire off a message on the user's behalf.
+    Never,
 }
 
-pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
-    paste_with_auto_submit(text, app_handle, true)
+fn should_send_auto_submit(
+    intent: SubmitIntent,
+    auto_submit: bool,
+    paste_method: PasteMethod,
+) -> bool {
+    if paste_method == PasteMethod::None {
+        // Nothing was typed, so there is nothing to submit.
+        return false;
+    }
+    match intent {
+        SubmitIntent::Always => true,
+        SubmitIntent::FollowSetting => auto_submit,
+        SubmitIntent::Never => false,
+    }
 }
 
-/// Paste, choosing whether auto-submit applies. Re-pasting an earlier
-/// transcript is not a fresh dictation, so it never presses Return on the
-/// user's behalf even when auto-submit is on.
-pub fn paste_with_auto_submit(
+/// Press the configured submit key on its own, with nothing to paste first.
+pub fn send_submit_key(app_handle: &AppHandle) -> Result<(), String> {
+    let key = get_settings(app_handle).auto_submit_key;
+    let enigo_state = app_handle
+        .try_state::<EnigoState>()
+        .ok_or("Enigo state not initialized")?;
+    let mut enigo = enigo_state
+        .0
+        .lock()
+        .map_err(|e| format!("Failed to lock Enigo: {}", e))?;
+    send_return_key(&mut enigo, key)
+}
+
+/// Paste, choosing whether the submit key follows.
+pub fn paste_with_submit(
     text: String,
     app_handle: AppHandle,
-    allow_auto_submit: bool,
+    submit: SubmitIntent,
 ) -> Result<(), String> {
     let settings = get_settings(&app_handle);
     let paste_method = settings.paste_method;
@@ -679,7 +710,7 @@ pub fn paste_with_auto_submit(
         }
     }
 
-    if allow_auto_submit && should_send_auto_submit(settings.auto_submit, paste_method) {
+    if should_send_auto_submit(submit, settings.auto_submit, paste_method) {
         std::thread::sleep(Duration::from_millis(50));
         send_return_key(&mut enigo, settings.auto_submit_key)?;
     }
@@ -699,22 +730,71 @@ pub fn paste_with_auto_submit(
 mod tests {
     use super::*;
 
+    use SubmitIntent::{Always, FollowSetting, Never};
+
     #[test]
     fn auto_submit_requires_setting_enabled() {
-        assert!(!should_send_auto_submit(false, PasteMethod::CtrlV));
-        assert!(!should_send_auto_submit(false, PasteMethod::Direct));
+        assert!(!should_send_auto_submit(
+            FollowSetting,
+            false,
+            PasteMethod::CtrlV
+        ));
+        assert!(!should_send_auto_submit(
+            FollowSetting,
+            false,
+            PasteMethod::Direct
+        ));
     }
 
     #[test]
     fn auto_submit_skips_none_paste_method() {
-        assert!(!should_send_auto_submit(true, PasteMethod::None));
+        assert!(!should_send_auto_submit(
+            FollowSetting,
+            true,
+            PasteMethod::None
+        ));
     }
 
     #[test]
     fn auto_submit_runs_for_active_paste_methods() {
-        assert!(should_send_auto_submit(true, PasteMethod::CtrlV));
-        assert!(should_send_auto_submit(true, PasteMethod::Direct));
-        assert!(should_send_auto_submit(true, PasteMethod::CtrlShiftV));
-        assert!(should_send_auto_submit(true, PasteMethod::ShiftInsert));
+        assert!(should_send_auto_submit(
+            FollowSetting,
+            true,
+            PasteMethod::CtrlV
+        ));
+        assert!(should_send_auto_submit(
+            FollowSetting,
+            true,
+            PasteMethod::Direct
+        ));
+        assert!(should_send_auto_submit(
+            FollowSetting,
+            true,
+            PasteMethod::CtrlShiftV
+        ));
+        assert!(should_send_auto_submit(
+            FollowSetting,
+            true,
+            PasteMethod::ShiftInsert
+        ));
+    }
+
+    /// Finish-and-send is the user asking for this one transcript to go, so it
+    /// does not wait for the auto-submit setting to be on.
+    #[test]
+    fn an_asked_for_submit_ignores_the_setting() {
+        assert!(should_send_auto_submit(Always, false, PasteMethod::Direct));
+        assert!(should_send_auto_submit(Always, false, PasteMethod::CtrlV));
+    }
+
+    /// Even then, a paste method that types nothing has nothing to send.
+    #[test]
+    fn an_asked_for_submit_still_needs_something_typed() {
+        assert!(!should_send_auto_submit(Always, true, PasteMethod::None));
+    }
+
+    #[test]
+    fn re_pasting_an_old_transcript_never_submits() {
+        assert!(!should_send_auto_submit(Never, true, PasteMethod::Direct));
     }
 }

@@ -186,6 +186,14 @@
           "paste_last_transcript": {
             "name": "Paste Last Transcript",
             "description": "Pastes the last thing you dictated. Older than the recency window, it does an ordinary paste instead."
+          },
+          "transcribe_hands_free": {
+            "name": "Hands-Free Shortcut",
+            "description": "Press once to start recording, press again to stop — no holding. Made for a mouse button."
+          },
+          "submit_transcription": {
+            "name": "Finish & Send",
+            "description": "Ends the recording, types what it heard and presses Enter. With nothing recording it just presses Enter."
           }
         },
         "errors": {

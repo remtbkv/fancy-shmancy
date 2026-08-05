@@ -27,7 +27,9 @@ export const GeneralSettings: React.FC = () => {
     <div className="max-w-3xl w-full mx-auto space-y-6">
       <SettingsGroup title={t("settings.general.title")}>
         <ShortcutInput shortcutId="transcribe" grouped={true} />
+        <ShortcutInput shortcutId="transcribe_hands_free" grouped={true} />
         <ShortcutInput shortcutId="stop_recording" grouped={true} />
+        <ShortcutInput shortcutId="submit_transcription" grouped={true} />
         <PushToTalk descriptionMode="tooltip" grouped={true} />
         {pushToTalk && (
           <PttDoubleTapLock descriptionMode="tooltip" grouped={true} />

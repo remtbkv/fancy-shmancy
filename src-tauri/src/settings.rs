@@ -924,6 +924,34 @@ pub fn get_default_settings() -> AppSettings {
             extra_bindings: Vec::new(),
         },
     );
+    // Unbound by default. Push-to-talk is the shipped default and this is the
+    // opposite grip, so it only exists once someone asks for it.
+    bindings.insert(
+        "transcribe_hands_free".to_string(),
+        ShortcutBinding {
+            id: "transcribe_hands_free".to_string(),
+            name: "Hands-free transcribe".to_string(),
+            description: "Press once to start recording and again to stop, whatever push-to-talk \
+                          is set to. Made for a mouse button, where holding is awkward."
+                .to_string(),
+            default_binding: String::new(),
+            current_binding: String::new(),
+            extra_bindings: Vec::new(),
+        },
+    );
+    bindings.insert(
+        "submit_transcription".to_string(),
+        ShortcutBinding {
+            id: "submit_transcription".to_string(),
+            name: "Finish and send".to_string(),
+            description: "Ends the recording, types what it heard and presses the submit key. \
+                          With nothing recording it just presses the submit key."
+                .to_string(),
+            default_binding: String::new(),
+            current_binding: String::new(),
+            extra_bindings: Vec::new(),
+        },
+    );
     // Unbound by default: holding the transcribe shortcut already ends the
     // recording on release, so this only earns its keep for hands-free use.
     bindings.insert(

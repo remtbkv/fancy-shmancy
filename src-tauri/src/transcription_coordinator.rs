@@ -69,6 +69,9 @@ enum Command {
     /// End the recording in progress from somewhere other than the shortcut
     /// that started it (the stop-recording shortcut, the tray, a signal).
     StopRequest,
+    /// Finish and send: end the recording and press the submit key once the
+    /// transcript has landed. With nothing in flight it is just the submit key.
+    SubmitRequest,
     ProcessingFinished,
 }
 
@@ -146,7 +149,14 @@ pub struct TranscriptionCoordinator {
 }
 
 pub fn is_transcribe_binding(id: &str) -> bool {
-    id == "transcribe" || id == "transcribe_with_post_process"
+    id == "transcribe" || id == "transcribe_with_post_process" || is_hands_free_binding(id)
+}
+
+/// A shortcut that toggles recording no matter how push-to-talk is set: press
+/// to start, press again to stop. A mouse button is a poor thing to hold, so
+/// the grip is the shortcut's own property rather than a global setting.
+pub fn is_hands_free_binding(id: &str) -> bool {
+    id == "transcribe_hands_free"
 }
 
 impl TranscriptionCoordinator {
@@ -335,7 +345,7 @@ impl TranscriptionCoordinator {
 
                             if push_to_talk {
                                 if is_pressed && matches!(stage, Stage::Idle) {
-                                    start(&app, &mut stage, &binding_id, &hotkey_string);
+                                    start(&app, &mut stage, &binding_id, &hotkey_string, true);
                                 } else if !is_pressed
                                     && matches!(&stage, Stage::Recording(id) if id == &binding_id)
                                 {
@@ -344,7 +354,9 @@ impl TranscriptionCoordinator {
                             } else if is_pressed {
                                 match &stage {
                                     Stage::Idle => {
-                                        start(&app, &mut stage, &binding_id, &hotkey_string);
+                                        // Nothing is being held, so no hold can
+                                        // turn out to have been an editing chord.
+                                        start(&app, &mut stage, &binding_id, &hotkey_string, false);
                                     }
                                     Stage::Recording(id) if id == &binding_id => {
                                         stop(&app, &mut stage, &binding_id, &hotkey_string);
@@ -365,6 +377,21 @@ impl TranscriptionCoordinator {
                                 debug!("Stop requested with no recording in progress");
                             }
                         }
+                        Command::SubmitRequest => {
+                            match &stage {
+                                Stage::Recording(id) => {
+                                    let binding_id = id.clone();
+                                    pending_release = None;
+                                    locked = false;
+                                    crate::actions::submit_next_transcript();
+                                    stop(&app, &mut stage, &binding_id, "submit shortcut");
+                                }
+                                // Already transcribing: the text has not been
+                                // typed yet, so it can still be sent.
+                                Stage::Processing => crate::actions::submit_next_transcript(),
+                                Stage::Idle => crate::actions::press_submit_key(&app),
+                            }
+                        }
                         Command::Cancel {
                             recording_was_active,
                         } => {
@@ -382,6 +409,10 @@ impl TranscriptionCoordinator {
                             stage = Stage::Idle;
                             locked = false;
                             crate::shortcut::editing_guard::disarm();
+                            // A submit that was never consumed — an empty or
+                            // failed transcription — must not carry over and
+                            // send the next one.
+                            crate::actions::forget_pending_submit();
                         }
                     }
                 }
@@ -427,6 +458,13 @@ impl TranscriptionCoordinator {
         }
     }
 
+    /// Finish the recording and send the transcript.
+    pub fn request_submit(&self) {
+        if self.tx.send(Command::SubmitRequest).is_err() {
+            warn!("Transcription coordinator channel closed");
+        }
+    }
+
     pub fn notify_cancel(&self, recording_was_active: bool) {
         if self
             .tx
@@ -446,14 +484,17 @@ impl TranscriptionCoordinator {
     }
 }
 
-fn start(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &str) {
+fn start(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &str, hold: bool) {
     let Some(action) = ACTION_MAP.get(binding_id) else {
         warn!("No action in ACTION_MAP for '{binding_id}'");
         return;
     };
     // Armed before the action runs: the editing key can land while the
-    // microphone is still opening.
-    crate::shortcut::editing_guard::arm(&crate::settings::get_settings(app));
+    // microphone is still opening. Only a held shortcut can turn out to have
+    // been an editing chord — a toggled one is long since up.
+    if hold {
+        crate::shortcut::editing_guard::arm(&crate::settings::get_settings(app));
+    }
     action.start(app, binding_id, hotkey_string);
     if app
         .try_state::<Arc<AudioRecordingManager>>()

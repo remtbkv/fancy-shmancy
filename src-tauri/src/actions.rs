@@ -869,7 +869,19 @@ impl ShortcutAction for TranscribeAction {
                                         return;
                                     }
 
-                                    match utils::paste(final_text, ah_clone.clone()) {
+                                    // A finish-and-send press, whenever it
+                                    // arrived, is answered here: this is the
+                                    // transcript it asked to send.
+                                    let submit = if take_pending_submit() {
+                                        crate::clipboard::SubmitIntent::Always
+                                    } else {
+                                        crate::clipboard::SubmitIntent::FollowSetting
+                                    };
+                                    match utils::paste_with_submit(
+                                        final_text,
+                                        ah_clone.clone(),
+                                        submit,
+                                    ) {
                                         Ok(()) => debug!(
                                             "Text pasted successfully in {:?}",
                                             paste_time.elapsed()
@@ -949,6 +961,39 @@ impl ShortcutAction for CancelAction {
     }
 }
 
+/// Set when the user asked for the transcript now being worked on to be sent
+/// once it lands. One-shot: whoever types the transcript takes it, and the
+/// coordinator clears it if the pipeline ends without typing anything.
+static SUBMIT_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Send the transcript currently being recorded or transcribed.
+pub fn submit_next_transcript() {
+    SUBMIT_PENDING.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Take the request, if there is one.
+fn take_pending_submit() -> bool {
+    SUBMIT_PENDING.swap(false, std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Drop an unconsumed request so it cannot send the *next* transcript.
+pub fn forget_pending_submit() {
+    SUBMIT_PENDING.store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Press the submit key on its own — what "finish and send" means when there is
+/// nothing to finish.
+pub fn press_submit_key(app: &AppHandle) {
+    let app = app.clone();
+    if let Err(e) = app.clone().run_on_main_thread(move || {
+        if let Err(e) = utils::send_submit_key(&app) {
+            error!("Failed to press the submit key: {}", e);
+        }
+    }) {
+        error!("Failed to press the submit key on the main thread: {:?}", e);
+    }
+}
+
 // Stop Recording Action
 struct StopRecordingAction;
 
@@ -962,6 +1007,22 @@ impl ShortcutAction for StopRecordingAction {
 
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
         // The shortcut coming back up is not itself an instruction.
+    }
+}
+
+// Finish And Send Action
+struct SubmitTranscriptionAction;
+
+impl ShortcutAction for SubmitTranscriptionAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        match app.try_state::<TranscriptionCoordinator>() {
+            Some(coordinator) => coordinator.request_submit(),
+            None => warn!("Submit shortcut fired before the coordinator was ready"),
+        }
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        // Nothing to do on release
     }
 }
 
@@ -1099,7 +1160,11 @@ impl ShortcutAction for PasteLastTranscriptAction {
         let app_clone = app.clone();
         if let Err(e) = app.run_on_main_thread(move || {
             // Never auto-submits: this is a re-paste, not a fresh dictation.
-            if let Err(e) = utils::paste_with_auto_submit(text, app_clone.clone(), false) {
+            if let Err(e) = utils::paste_with_submit(
+                text,
+                app_clone.clone(),
+                crate::clipboard::SubmitIntent::Never,
+            ) {
                 error!("Failed to paste the last transcript: {}", e);
                 let _ = app_clone.emit("paste-error", ());
             }
@@ -1157,8 +1222,18 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
         Arc::new(CancelAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
+        "transcribe_hands_free".to_string(),
+        Arc::new(TranscribeAction {
+            post_process: false,
+        }) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
         "stop_recording".to_string(),
         Arc::new(StopRecordingAction) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
+        "submit_transcription".to_string(),
+        Arc::new(SubmitTranscriptionAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "paste_last_transcript".to_string(),
