@@ -635,6 +635,19 @@ pub enum SubmitIntent {
     Never,
 }
 
+/// The submit flag handed to *any* paste path, legacy or receipt-sequenced.
+/// Reading `settings.auto_submit` directly at a paste call site is the bug this
+/// exists to prevent: the raw setting doesn't know *why* this text is being
+/// pasted, so a re-pasted historical transcript would press Enter and a
+/// finish-and-send would not.
+fn submit_flag(
+    settings: &crate::settings::AppSettings,
+    intent: SubmitIntent,
+    paste_method: PasteMethod,
+) -> bool {
+    should_send_auto_submit(intent, settings.auto_submit, paste_method)
+}
+
 fn should_send_auto_submit(
     intent: SubmitIntent,
     auto_submit: bool,
@@ -724,7 +737,7 @@ pub fn paste_with_submit(
                     &app_handle,
                     &paste_method,
                     &mut enigo,
-                    should_send_auto_submit(submit, settings.auto_submit, paste_method),
+                    submit_flag(&settings, submit, paste_method),
                     settings.auto_submit_key,
                     settings.clipboard_handling,
                 ) {
@@ -753,7 +766,7 @@ pub fn paste_with_submit(
         }
     }
 
-    if should_send_auto_submit(submit, settings.auto_submit, paste_method) {
+    if submit_flag(&settings, submit, paste_method) {
         std::thread::sleep(Duration::from_millis(50));
         send_return_key(&mut enigo, settings.auto_submit_key)?;
     }
@@ -774,6 +787,72 @@ mod tests {
     use super::*;
 
     use SubmitIntent::{Always, FollowSetting, Never};
+
+    fn settings_with_auto_submit(auto_submit: bool) -> crate::settings::AppSettings {
+        let mut settings = crate::settings::get_default_settings();
+        settings.auto_submit = auto_submit;
+        settings
+    }
+
+    /// Every paste path — the legacy clipboard one and the receipt-sequenced one
+    /// — has to take its submit decision from `submit_flag`. Passing the raw
+    /// `auto_submit` setting instead is silently wrong for two of the three
+    /// intents, and the mistake is invisible in a diff.
+    #[test]
+    fn submit_flag_answers_for_every_intent_and_paste_method() {
+        let methods = [
+            PasteMethod::CtrlV,
+            PasteMethod::CtrlShiftV,
+            PasteMethod::ShiftInsert,
+            PasteMethod::Direct,
+            PasteMethod::ExternalScript,
+            PasteMethod::None,
+        ];
+
+        for auto_submit in [false, true] {
+            let settings = settings_with_auto_submit(auto_submit);
+            for method in methods {
+                let nothing_was_typed = method == PasteMethod::None;
+
+                // Re-pasting an earlier transcript never sends, whatever the setting.
+                assert!(
+                    !submit_flag(&settings, Never, method),
+                    "Never sent with auto_submit={auto_submit}, method={method:?}"
+                );
+
+                // Finish-and-send always sends, even with the setting off.
+                assert_eq!(
+                    submit_flag(&settings, Always, method),
+                    !nothing_was_typed,
+                    "Always with auto_submit={auto_submit}, method={method:?}"
+                );
+
+                // An ordinary dictation follows the setting.
+                assert_eq!(
+                    submit_flag(&settings, FollowSetting, method),
+                    auto_submit && !nothing_was_typed,
+                    "FollowSetting with auto_submit={auto_submit}, method={method:?}"
+                );
+            }
+        }
+    }
+
+    /// The two cases a paste path reading `settings.auto_submit` gets backwards.
+    #[test]
+    fn submit_flag_regressions_from_reading_the_setting_directly() {
+        // paste_last_transcript, auto-submit on: must not fire off an old transcript.
+        assert!(!submit_flag(
+            &settings_with_auto_submit(true),
+            Never,
+            PasteMethod::CtrlV
+        ));
+        // submit_transcription, auto-submit off: the user asked for this one to go.
+        assert!(submit_flag(
+            &settings_with_auto_submit(false),
+            Always,
+            PasteMethod::CtrlV
+        ));
+    }
 
     #[test]
     fn auto_submit_requires_setting_enabled() {

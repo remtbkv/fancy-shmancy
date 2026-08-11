@@ -118,6 +118,52 @@ pub fn tray_warning_active(app: &AppHandle) -> bool {
         .unwrap_or(false)
 }
 
+/// The Carbon stand-in for a binding while Secure Input is active: the primary
+/// shortcut only. This fork lets one action carry alternates, and upstream's
+/// shadow path predates that — cloning them here would register each alternate
+/// a second time on top of the live handy-keys registration, and an alternate
+/// that failed to register would strand the Carbon one past the fallback.
+fn shadow_binding(
+    binding: &crate::settings::ShortcutBinding,
+    carbon_binding: String,
+) -> crate::settings::ShortcutBinding {
+    let mut shadow = binding.clone();
+    shadow.current_binding = carbon_binding;
+    shadow.extra_bindings.clear();
+    shadow
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shadow_binding;
+    use crate::settings::ShortcutBinding;
+
+    /// The shadow stands in for the primary shortcut only. Carrying this fork's
+    /// alternates into it double-registers them on top of the live handy-keys
+    /// registration, and an alternate that fails to register strands the Carbon
+    /// shortcut after Secure Input clears.
+    #[test]
+    fn shadow_covers_the_primary_shortcut_and_none_of_the_alternates() {
+        let binding = ShortcutBinding {
+            id: "transcribe".to_string(),
+            name: "Transcribe".to_string(),
+            description: "Start dictating".to_string(),
+            default_binding: "option_right".to_string(),
+            current_binding: "option_right".to_string(),
+            extra_bindings: vec!["mouse4".to_string(), "cmd+shift+d".to_string()],
+        };
+
+        let shadow = shadow_binding(&binding, "control+option+d".to_string());
+
+        assert_eq!(shadow.current_binding, "control+option+d");
+        assert!(shadow.extra_bindings.is_empty());
+        assert_eq!(shadow.id, binding.id);
+        assert_eq!(shadow.default_binding, binding.default_binding);
+        // The original is untouched, so the live registration still owns them.
+        assert_eq!(binding.extra_bindings.len(), 2);
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod imp {
     use super::*;
@@ -437,13 +483,7 @@ mod imp {
             return false;
         };
 
-        let mut shadow = binding.clone();
-        shadow.current_binding = carbon_binding;
-        // Only the primary shortcut is shadowed (see `hotkey` above), so the
-        // alternates must not ride along: registering them here would double
-        // up on the live handy-keys registration, and one that fails to
-        // register would strand the Carbon shortcut past the fallback.
-        shadow.extra_bindings.clear();
+        let shadow = super::shadow_binding(binding, carbon_binding);
 
         match crate::shortcut::tauri_impl::register_shortcut(app, shadow.clone()) {
             Ok(()) => {
