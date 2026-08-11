@@ -9,6 +9,8 @@ import { useSettings } from "../../hooks/useSettings";
 import { useOsType } from "../../hooks/useOsType";
 import { commands } from "@/bindings";
 import { toast } from "sonner";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { SECURE_INPUT_HELP_URL } from "../SecureInputWarning";
 
 interface HandyKeysShortcutInputProps {
   descriptionMode?: "inline" | "tooltip";
@@ -46,6 +48,13 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
   const unlistenRef = useRef<(() => void) | null>(null);
   // Use a ref to track currentKeys for the event handler (avoids stale closure)
   const currentKeysRef = useRef<string>("");
+  // Track keyed vs modifier-only captures separately so a combo commits only
+  // on its key's release and a modifier-only shortcut only once every
+  // modifier is released. Committing on the *first* release (the old
+  // behavior) silently saved just the modifier whenever the key event never
+  // arrived — e.g. while macOS Secure Input is active (issue #1578).
+  const keyedShortcutRef = useRef<string>("");
+  const modifierOnlyShortcutRef = useRef<string>("");
   const osType = useOsType();
 
   const bindings = getSetting("bindings") || {};
@@ -69,7 +78,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
     await commands.stopHandyKeysRecording().catch(console.error);
     // The binding was taken off the hook while recording so the old keys
     // wouldn't fire the action; put it back.
-    await commands.resumeBinding(shortcutId).catch(console.error);
+    await commands.resumeAllBindings().catch(console.error);
   }, [shortcutId]);
 
   // Handle cancellation
@@ -79,6 +88,8 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
     setRecordingIndex(null);
     setCurrentKeys("");
     currentKeysRef.current = "";
+    keyedShortcutRef.current = "";
+    modifierOnlyShortcutRef.current = "";
   }, [recordingIndex, stopBackendRecording]);
 
   // Set up event listener for handy-keys events
@@ -90,38 +101,65 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
 
     const setupListener = async () => {
       // Listen for key events from backend
+      const commitAndStop = async (keysToCommit: string) => {
+        const next = [...shortcutsRef.current];
+        next[targetIndex] = keysToCommit;
+
+        await stopBackendRecording();
+        setRecordingIndex(null);
+        setCurrentKeys("");
+        currentKeysRef.current = "";
+        keyedShortcutRef.current = "";
+        modifierOnlyShortcutRef.current = "";
+
+        try {
+          await setBindingShortcuts(shortcutId, next);
+        } catch (error) {
+          console.error("Failed to change binding:", error);
+          toast.error(
+            t("settings.general.shortcut.errors.set", {
+              error: String(error),
+            }),
+          );
+        }
+      };
+
       const unlisten = await listen<HandyKeysEvent>(
         "handy-keys-event",
         async (event) => {
           if (cleanup) return;
 
-          const { hotkey_string, is_key_down } = event.payload;
+          const { hotkey_string, is_key_down, key, modifiers } = event.payload;
 
           if (is_key_down && hotkey_string) {
-            // Update both state (for display) and ref (for release handler)
+            // Update both state (for display) and refs (for release handler)
+            if (key) {
+              keyedShortcutRef.current = hotkey_string;
+            } else {
+              modifierOnlyShortcutRef.current = hotkey_string;
+            }
             currentKeysRef.current = hotkey_string;
             setCurrentKeys(hotkey_string);
-          } else if (!is_key_down && currentKeysRef.current) {
-            // Key released - commit the shortcut using the ref value
-            const recorded = currentKeysRef.current;
-            const next = [...shortcutsRef.current];
-            next[targetIndex] = recorded;
-
-            await stopBackendRecording();
-            setRecordingIndex(null);
-            setCurrentKeys("");
-            currentKeysRef.current = "";
-
-            try {
-              await setBindingShortcuts(shortcutId, next);
-            } catch (error) {
-              console.error("Failed to change binding:", error);
-              toast.error(
-                t("settings.general.shortcut.errors.set", {
-                  error: String(error),
-                }),
-              );
+          } else if (!is_key_down && key) {
+            // The main key was released — commit the keyed combo. The release
+            // event's hotkey_string still contains the key, so it works even
+            // if the key-down was somehow missed. Never fall back to a
+            // modifier-only capture here: that's how bindings used to get
+            // silently overwritten with just the modifier (issue #1578).
+            const keysToCommit = keyedShortcutRef.current || hotkey_string;
+            if (keysToCommit) {
+              await commitAndStop(keysToCommit);
             }
+          } else if (
+            !is_key_down &&
+            !key &&
+            modifiers.length === 0 &&
+            !keyedShortcutRef.current &&
+            modifierOnlyShortcutRef.current
+          ) {
+            // Every modifier released without a main key ever going down —
+            // commit as a modifier-only shortcut
+            await commitAndStop(modifierOnlyShortcutRef.current);
           }
         },
       );
@@ -137,8 +175,11 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
         unlistenRef.current();
         unlistenRef.current = null;
       }
-      // Stop backend recording on unmount to prevent orphaned recording loops
+      // Stop backend recording on unmount to prevent orphaned recording loops,
+      // and put the suspended bindings back — otherwise navigating away
+      // mid-capture leaves every shortcut unregistered.
       commands.stopHandyKeysRecording().catch(console.error);
+      commands.resumeAllBindings().catch(console.error);
     };
   }, [
     recordingIndex,
@@ -169,17 +210,41 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
   const startRecording = async (index: number) => {
     if (recordingIndex !== null) return;
 
+    // The backend refuses to record while macOS Secure Input is active (the
+    // recorder's listener would receive no key events and capture just the
+    // modifier) — it also flips the warning banner on, so the toast points at
+    // a visible explanation.
     try {
       // Silence the current shortcut first — otherwise pressing it to record a
       // replacement would fire the action instead of being captured.
-      await commands.suspendBinding(shortcutId).catch(console.error);
-      await commands.startHandyKeysRecording(shortcutId);
+      await commands.suspendAllBindings().catch(console.error);
+      const result = await commands.startHandyKeysRecording(shortcutId);
+      if (result.status === "error") {
+        await commands.resumeAllBindings().catch(console.error);
+        if (String(result.error).includes("secure-input-active")) {
+          toast.error(t("secureInput.recorderBlocked"), {
+            action: {
+              label: t("secureInput.learnMore"),
+              onClick: () => openUrl(SECURE_INPUT_HELP_URL),
+            },
+          });
+        } else {
+          toast.error(
+            t("settings.general.shortcut.errors.set", {
+              error: String(result.error),
+            }),
+          );
+        }
+        return;
+      }
       setRecordingIndex(index);
       setCurrentKeys("");
       currentKeysRef.current = "";
+      keyedShortcutRef.current = "";
+      modifierOnlyShortcutRef.current = "";
     } catch (error) {
       console.error("Failed to start recording:", error);
-      await commands.resumeBinding(shortcutId).catch(console.error);
+      await commands.resumeAllBindings().catch(console.error);
       toast.error(
         t("settings.general.shortcut.errors.set", { error: String(error) }),
       );
