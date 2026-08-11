@@ -80,6 +80,11 @@ the translation checker (reported, not gating — see below), and the release
 bundle. Install by hand, between dictations, and keep the previous `.app` for
 rollback.
 
+`scripts/upstream-watch.sh` runs weekly from
+`~/Library/LaunchAgents/com.handy.upstream-watch.plist` (Mondays, 9:07): it
+fetches upstream, writes a dated report to `~/handy-review/upstream/`, and
+notifies once per release that this fork hasn't merged. A quiet week is silent.
+
 Sync every release. Drift is what makes a merge expensive: at v0.9.5 the fork's
 merge base was 19 days old and 9 files collided, and each skipped release leaves
 a hole that every later commit conflicts against. Merging the release tag (not
