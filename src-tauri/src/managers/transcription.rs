@@ -1585,7 +1585,19 @@ impl TranscriptionManager {
 
                         session
                             .run(&audio, &run_options)
-                            .map(|t| t.text)
+                            .map(|t| {
+                                // Where the time actually goes inside the model, so
+                                // tuning decisions are measured rather than guessed.
+                                // Zero means the runtime didn't report that stage.
+                                info!(
+                                    "transcribe-cpp stage timings: load={:.0}ms mel={:.0}ms encode={:.0}ms decode={:.0}ms",
+                                    t.timings.load_ms,
+                                    t.timings.mel_ms,
+                                    t.timings.encode_ms,
+                                    t.timings.decode_ms
+                                );
+                                t.text
+                            })
                             .map_err(|e| {
                                 anyhow::anyhow!("transcribe-cpp transcription failed: {}", e)
                             })
@@ -1714,7 +1726,9 @@ impl TranscriptionManager {
         // family). We don't pass a prompt to non-whisper models (it requires the
         // whisper-kind run extension), so they still get fuzzy correction here,
         // same as the ONNX engines.
+        let post_started = std::time::Instant::now();
         let filtered_result = post_process_transcription_text(result, &settings, model_is_whisper);
+        let post_ms = post_started.elapsed().as_secs_f64() * 1000.0;
 
         let et = std::time::Instant::now();
         let translation_note = if settings.translate_to_english {
@@ -1729,8 +1743,8 @@ impl TranscriptionManager {
         let audio_secs = audio_len as f64 / 16_000.0;
         let speedup = real_time_factor(audio_secs, elapsed_secs);
         info!(
-            "Transcription completed in {:.2}s for {:.2}s of audio ({:.2}x real-time){}",
-            elapsed_secs, audio_secs, speedup, translation_note
+            "Transcription completed in {:.2}s for {:.2}s of audio ({:.2}x real-time){}, word correction {:.0}ms",
+            elapsed_secs, audio_secs, speedup, translation_note, post_ms
         );
 
         let final_result = filtered_result;
