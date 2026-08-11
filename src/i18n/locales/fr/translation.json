@@ -362,6 +362,7 @@
           "min10": "Après 10 minutes",
           "min15": "Après 15 minutes",
           "hour1": "Après 1 heure",
+          "hours4": "Après 4 heures",
           "sec15": "Après 15 secondes (Débogage)"
         }
       },

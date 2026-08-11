@@ -362,6 +362,7 @@
           "min10": "Po 10 minutach",
           "min15": "Po 15 minutach",
           "hour1": "Po 1 godzinie",
+          "hours4": "Po 4 godzinach",
           "sec15": "Po 15 sekundach (Debug)"
         }
       },

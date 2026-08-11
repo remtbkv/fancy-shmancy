@@ -362,6 +362,7 @@
           "min10": "Na 10 minuten",
           "min15": "Na 15 minuten",
           "hour1": "Na 1 uur",
+          "hours4": "Na 4 uur",
           "sec15": "Na 15 seconden (Debug)"
         }
       },

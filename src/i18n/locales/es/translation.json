@@ -362,6 +362,7 @@
           "min10": "Después de 10 minutos",
           "min15": "Después de 15 minutos",
           "hour1": "Después de 1 hora",
+          "hours4": "Después de 4 horas",
           "sec15": "Después de 15 segundos (Depuración)"
         }
       },

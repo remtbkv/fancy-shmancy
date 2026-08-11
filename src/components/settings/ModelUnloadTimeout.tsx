@@ -46,6 +46,10 @@ export const ModelUnloadTimeoutSetting: React.FC<ModelUnloadTimeoutProps> = ({
       value: "hour1" as ModelUnloadTimeout,
       label: t("settings.advanced.modelUnload.options.hour1"),
     },
+    {
+      value: "hours4" as ModelUnloadTimeout,
+      label: t("settings.advanced.modelUnload.options.hours4"),
+    },
   ];
 
   const debugTimeoutOptions = [

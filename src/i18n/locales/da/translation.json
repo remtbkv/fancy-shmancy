@@ -362,6 +362,7 @@
           "min10": "Efter 10 minutter",
           "min15": "Efter 15 minutter",
           "hour1": "Efter 1 time",
+          "hours4": "Efter 4 timer",
           "sec15": "Efter 15 sekunder (fejlfinding)"
         }
       },

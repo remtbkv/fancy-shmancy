@@ -362,6 +362,7 @@
           "min10": "10 dakika sonra",
           "min15": "15 dakika sonra",
           "hour1": "1 saat sonra",
+          "hours4": "4 saat sonra",
           "sec15": "15 saniye sonra (Debug)"
         }
       },

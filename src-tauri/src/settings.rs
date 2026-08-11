@@ -162,6 +162,7 @@ pub enum ModelUnloadTimeout {
     Min10,
     Min15,
     Hour1,
+    Hours4,
     Sec15, // Debug mode only
 }
 
@@ -239,6 +240,7 @@ impl ModelUnloadTimeout {
             ModelUnloadTimeout::Min10 => Some(10),
             ModelUnloadTimeout::Min15 => Some(15),
             ModelUnloadTimeout::Hour1 => Some(60),
+            ModelUnloadTimeout::Hours4 => Some(240),
             ModelUnloadTimeout::Sec15 => Some(0), // Special case for debug - handled separately
         }
     }
@@ -1294,6 +1296,28 @@ pub fn get_recording_retention_period(app: &AppHandle) -> RecordingRetentionPeri
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unload_timeout_serde_names_are_what_the_dropdown_sends() {
+        // The dropdown sends these strings verbatim to `set_model_unload_timeout`,
+        // so serde's names are the contract. (The generated TS union spells them
+        // differently — min_15, hour_1 — which is why it can't be trusted here.)
+        use super::ModelUnloadTimeout;
+        assert_eq!(
+            serde_json::to_string(&ModelUnloadTimeout::Hour1).unwrap(),
+            "\"hour1\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ModelUnloadTimeout::Hours4).unwrap(),
+            "\"hours4\""
+        );
+        assert_eq!(
+            serde_json::from_str::<ModelUnloadTimeout>("\"hours4\"").unwrap(),
+            ModelUnloadTimeout::Hours4
+        );
+        assert_eq!(ModelUnloadTimeout::Hours4.to_minutes(), Some(240));
+        assert_eq!(ModelUnloadTimeout::Hours4.to_seconds(), Some(240 * 60));
+    }
+
     use super::*;
 
     fn default_settings_json() -> serde_json::Value {
