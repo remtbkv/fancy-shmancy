@@ -16,8 +16,13 @@ DST="$HOME/handy-voice-dataset"
 
 mkdir -p "$DST/recordings"
 
-# Audio: append-only.
-rsync -a --ignore-existing "$SRC/recordings/" "$DST/recordings/"
+# Audio: hardlinks, not copies. Same inode, so the archive costs no extra disk,
+# and a file the app later unlinks stays alive here because this link still holds
+# it. --ignore-existing means an archived file is never touched again.
+find "$SRC/recordings" -name '*.wav' -type f -print0 |
+  while IFS= read -r -d '' f; do
+    [ -e "$DST/recordings/$(basename "$f")" ] || ln "$f" "$DST/recordings/"
+  done
 
 # Transcripts: a fresh snapshot of the database, plus an append-only JSONL of
 # (audio file, text) pairs — the shape a fine-tune actually needs. Rows the app

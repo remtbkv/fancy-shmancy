@@ -1,8 +1,10 @@
 import React from "react";
+import mark67 from "./mark67.png";
 
 /**
- * "Fancy Shmancy" wordmark — a monocled, top-hatted gentleman of a logo.
- * Keeps the original filename and export so every existing import still works.
+ * "Fancy Shmancy" wordmark — six-seven in a pair of cupped hands, monocle still
+ * dangling off the end. Keeps the original filename and export so every existing
+ * import still works.
  */
 const HandyTextLogo = ({
   width,
@@ -30,18 +32,15 @@ const HandyTextLogo = ({
         </linearGradient>
       </defs>
 
-      {/* top hat, perched at a rakish angle */}
-      <g transform="rotate(-14 132 68)">
-        <ellipse cx="132" cy="98" rx="82" ry="15" fill="#1C1C24" />
-        <path
-          d="M88 93 L93 23 Q94 12 105 11 L160 11 Q171 12 172 23 L177 93 Q155 102 132 102 Q109 102 88 93 Z"
-          fill="#26262F"
-        />
-        <path
-          d="M86 65 Q132 78 178 65 L179 81 Q132 94 85 81 Z"
-          fill="url(#fs-gold)"
-        />
-      </g>
+      {/* six-seven, held up in a pair of hands */}
+      <image
+        href={mark67}
+        x="4"
+        y="60"
+        width="218"
+        height="200"
+        preserveAspectRatio="xMidYMid meet"
+      />
 
       {/* the words — a wordmark, the one string that must not be translated */}
       {/* eslint-disable i18next/no-literal-string */}
