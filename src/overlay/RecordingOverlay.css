@@ -514,12 +514,18 @@
   background: color-mix(in srgb, var(--w-ink) 40%, transparent);
   transform-origin: center;
   will-change: transform;
-  transform: scaleY(calc(var(--audio-scale, 1) * var(--bar-height-scale, 1)));
+  /* Flat is the resting truth of a bar: a 2px dot, no bulge and no level. Only
+     an open microphone lights them and gives them height — measured off the
+     reference, Wispr's bars sit at exactly 2.0pt and 40% white the moment it
+     stops listening, however loud the room still is. */
+  transform: none;
 }
-/* Mic open: solid, and riding the 1s bounce staggered outward from the centre. */
-.wpill.recording .wwave i,
-.wpill.working .wwave i {
+/* Mic open: solid, scaled by the level, and riding the 1s bounce staggered
+   outward from the centre. Nothing below applies once it stops listening, so
+   transcribing goes flat even though audio is still arriving. */
+.wpill.recording .wwave i {
   background: var(--w-ink);
+  transform: scaleY(calc(var(--audio-scale, 1) * var(--bar-height-scale, 1)));
   animation: wwave-bounce 1s infinite ease-in-out;
 }
 @keyframes wwave-bounce {
@@ -555,8 +561,7 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .wpill.recording .wwave i,
-  .wpill.working .wwave i {
+  .wpill.recording .wwave i {
     animation: none;
   }
 }
@@ -592,9 +597,9 @@
 
 /* Arming: the shortcut has fired but the first microphone callback has not
    landed. Upstream added this state; on the flow bar it reads as the bars
-   holding at the floor in a muted grey rather than pretending to hear. */
-.wwave.arming i {
+   sitting flat and dimmer still, rather than pretending to hear. */
+.wpill.recording .wwave.arming i {
   background: color-mix(in srgb, var(--w-ink) 25%, transparent);
   animation: none;
-  transform: scaleY(var(--bar-height-scale, 1));
+  transform: none;
 }
