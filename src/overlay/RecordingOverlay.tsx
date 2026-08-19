@@ -34,13 +34,21 @@ const FLOW_BAR_STYLE: React.CSSProperties[] = Array.from(
     const distance = Math.abs((FLOW_BARS - 1) / 2 - i);
     const half = Math.ceil(FLOW_BARS / 2);
     return {
-      "--bar-height-scale": Math.max(
-        0,
-        1 - Math.pow(distance, 2) * FLOW_BULGE,
-      ),
+      "--bar-height-scale": Math.max(0, 1 - Math.pow(distance, 2) * FLOW_BULGE),
       animationDelay: `${0.1 * (i < half ? i : i - FLOW_BARS)}s`,
     } as React.CSSProperties;
   },
+);
+
+// The working spinner: eight ticks on a 16px circle, each 45 degrees round and
+// pushed 6px out from the centre, fading in sequence over 1.1s.
+const FLOW_SPINNER_TICKS = 8;
+const FLOW_SPINNER_STYLE: React.CSSProperties[] = Array.from(
+  { length: FLOW_SPINNER_TICKS },
+  (_, i) => ({
+    transform: `rotate(${45 * i}deg) translate(0, -6px)`,
+    animationDelay: `${-0.1375 * (FLOW_SPINNER_TICKS - 1 - i)}s`,
+  }),
 );
 
 const RecordingOverlay: React.FC = () => {
@@ -68,8 +76,6 @@ const RecordingOverlay: React.FC = () => {
   // --audio-scale every bar reads from.
   const flowLevelRef = useRef(0);
   const flowWaveRef = useRef<HTMLDivElement>(null);
-  const pillRef = useRef<HTMLDivElement>(null);
-  const pillContentRef = useRef<HTMLDivElement>(null);
   // Live-text scroll-back: the text region "sticks" to the newest line while the
   // user is at the bottom; if they scroll up to read history, auto-follow pauses
   // until they scroll back down.
@@ -164,7 +170,10 @@ const RecordingOverlay: React.FC = () => {
       raf = requestAnimationFrame(tick);
       const el = flowWaveRef.current;
       if (!el) return;
-      const dt = Math.min(Math.max(last === null ? FLOW_FRAME_MS : now - last, 1), 200);
+      const dt = Math.min(
+        Math.max(last === null ? FLOW_FRAME_MS : now - last, 1),
+        200,
+      );
       last = now;
       const blend = Math.pow(FLOW_BLEND, dt / FLOW_FRAME_MS);
       const blended = smoothed * blend + flowLevelRef.current * (1 - blend);
@@ -180,29 +189,18 @@ const RecordingOverlay: React.FC = () => {
     return () => cancelAnimationFrame(raf);
   }, [isVisible]);
 
-  // Measure what the capsule is holding and write the width back as a px value.
-  // The pill starts at the width of Wispr's resting nub, so the first pass after
-  // paint is the grow-in; every later pass (recording → transcribing, cancel
-  // revealed on hover) is the same 400ms morph between two real numbers.
+  // The capsule enters at its resting size and is given the live state on the
+  // next frame, so the 100ms transition plays the grow instead of the bar just
+  // appearing at full size.
+  const [grown, setGrown] = useState(false);
   useEffect(() => {
-    const pill = pillRef.current;
-    const content = pillContentRef.current;
-    if (!pill || !content) return;
-    const PILL_CHROME = 26; // 12px padding a side, plus the 1px hairline
-    const apply = () => {
-      // offsetWidth, not the bounding rect: the content is mid pop-in (scaled
-      // 0.9 → 1) on the first pass, and a transformed rect would lock the pill
-      // to a width ~8% short of what it ends up holding.
-      pill.style.setProperty(
-        "--w-pill-w",
-        `${content.offsetWidth + PILL_CHROME}px`,
-      );
-    };
-    apply();
-    const observer = new ResizeObserver(apply);
-    observer.observe(content);
-    return () => observer.disconnect();
-  }, [isVisible, state]);
+    if (!isVisible) {
+      setGrown(false);
+      return;
+    }
+    const raf = requestAnimationFrame(() => setGrown(true));
+    return () => cancelAnimationFrame(raf);
+  }, [isVisible]);
 
   // Stick to the bottom as text streams in — but only while pinned, so a user who
   // has scrolled up to read history isn't yanked back down by the next chunk.
@@ -236,28 +234,19 @@ const RecordingOverlay: React.FC = () => {
   // Flow-bar waveform: ten bars whose scale comes entirely from CSS (the shared
   // --audio-scale on this element, times each bar's own bulge factor).
   const flowWave = (
-    <div ref={flowWaveRef} className="wwave live">
+    <div ref={flowWaveRef} className="wwave">
       {FLOW_BAR_STYLE.map((barStyle, i) => (
         <i key={i} style={barStyle} />
       ))}
     </div>
   );
 
-  const flowCancel = (
-    <button
-      className="wx"
-      aria-label="cancel"
-      onClick={() => commands.cancelOperation()}
-    >
-      <svg viewBox="0 0 16 16" aria-hidden="true">
-        <path
-          d="M4 4 L12 12 M12 4 L4 12"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-        />
-      </svg>
-    </button>
+  const flowSpinner = (
+    <span className="wspinner">
+      {FLOW_SPINNER_STYLE.map((tickStyle, i) => (
+        <i key={i} style={tickStyle} />
+      ))}
+    </span>
   );
 
   const cancelBtn = (
@@ -356,32 +345,23 @@ const RecordingOverlay: React.FC = () => {
     );
   }
 
-  // ---- Minimal overlay: the flow bar. A capsule that hugs its content and holds
-  // exactly one thing at a time — the waveform while recording, a spinner and a
-  // label while transcribing. The change between them is a width morph, so the
-  // capsule reads as one object throughout. Cancel appears on hover.
+  // ---- Minimal overlay: the flow bar. A fixed-size capsule per state — 73x30
+  // while the mic is open, 98x30 while it works, each reached in 100ms from the
+  // 40x8 nub it enters as. Clicking it cancels, as it did before.
   const working = state === "transcribing" || state === "processing";
-  const workLabel =
-    state === "processing"
-      ? t("overlay.processing")
-      : t("overlay.transcribing");
 
   return (
     <div
       dir={direction}
       className={`ov-stage ${position} ov-fade ${isVisible ? "show" : ""}`}
     >
-      <div className="wpill" ref={pillRef}>
-        <div className="wpill-content" ref={pillContentRef}>
-          {working ? (
-            <>
-              <span className="wspinner" />
-              <span className="wlabel">{workLabel}</span>
-            </>
-          ) : (
-            flowWave
-          )}
-          {flowCancel}
+      <div
+        className={`wpill ${grown ? (working ? "working" : "recording") : ""}`}
+        onClick={() => commands.cancelOperation()}
+      >
+        <div className="wrow">
+          {flowWave}
+          {working && flowSpinner}
         </div>
       </div>
     </div>

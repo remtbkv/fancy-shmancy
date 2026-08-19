@@ -10,11 +10,8 @@
   --w-surface: #000; /* pill fill */
   --w-ink: #fff; /* waveform + label */
   --w-hairline: #30302f; /* 1px pill border */
-  /* Wispr's spring, used for the pill's collapse and the waveform's own
-     size changes. */
-  --w-ease-collapse: cubic-bezier(0.05, 0.6, 0.4, 0.95);
-  --w-ease-morph: cubic-bezier(0.4, 0, 0.2, 1);
-  --w-ease-pop: cubic-bezier(0.2, 0.7, 0.3, 1);
+  /* The one curve the bar moves on. */
+  --w-ease: cubic-bezier(0.05, 0.6, 0.4, 0.95);
 }
 @media (prefers-color-scheme: light) {
   :root {
@@ -361,182 +358,159 @@
 }
 
 /* ============================================================
-   Flow bar — the compact overlay, rebuilt to Wispr Flow's dimensions.
+   Flow bar — Wispr Flow's dictation bar, rebuilt from the rules its own
+   bundle ships (`Wispr Flow.app/Contents/Resources/app.asar`, the status
+   renderer's `thoughtBubble` / `waveform` / `bar` modules, bottom dock).
 
-   A 30px capsule that hugs its content, holding ten 2px bars that scale from
-   the mic level. Every number here (bar width, gap, radius, the 1s bounce
-   keyframe, the per-bar bulge and delay ramp, the 400ms morph) is Wispr's,
-   so the two bars read as the same object side by side.
+   The bar is a fixed-size capsule per state, not a content-hugging one:
+   Wispr sizes it 40x8 at rest, 73x30 while the mic is open and 98x30 while
+   it works, and moves between those in 100ms. Everything below is those
+   numbers.
    ============================================================ */
 .wpill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  /* 30px is the whole capsule, hairline included — not 30px of content plus a
-     border on top of it. */
   box-sizing: border-box;
-  height: 30px;
-  /* Width is measured from the content and written back as a px value (see the
-     resize observer in RecordingOverlay.tsx) so the capsule can actually morph
-     between states — fit-content has nothing to interpolate between. It starts
-     at the width of Wispr's resting nub and grows from there on first paint. */
-  width: var(--w-pill-w, 8px);
-  padding: 0 12px;
-  flex: none;
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  flex-shrink: 0;
+  /* Resting: the nub the bar grows out of. */
+  width: 40px;
+  height: 8px;
   background: var(--w-surface);
   border: 1px solid var(--w-hairline);
-  border-radius: 500px;
-  transition:
-    width 400ms var(--w-ease-morph),
-    height 400ms var(--w-ease-morph);
+  border-radius: 22.5px;
+  overflow: hidden;
+  transition: all 0.1s var(--w-ease);
 }
-/* Content pops in on mount (0.9 → 1), the same 280ms curve Wispr uses when the
-   bar changes what it is showing. */
-.wpill-content {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: center;
-  gap: 0;
-  flex: none; /* keep the measured width; never shrink inside the morphing pill */
-  transform-origin: center;
-  animation: wpill-in 280ms var(--w-ease-pop);
+.wpill.recording {
+  width: 73px;
+  height: 30px;
 }
-@keyframes wpill-in {
-  from {
-    opacity: 0;
-    transform: scale(0.9);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
+.wpill.working {
+  width: 98px;
+  height: 30px;
+  padding: 6px 12px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .wpill {
+    transition: none;
   }
 }
 
-/* Waveform. 18px tall box with 4px/8px padding, so a resting bar is a 2px dot
-   and a loud one grows to ~15px without touching the capsule's edge. */
+/* Row inside the capsule — column at rest, laid out along the bar when docked
+   to an edge. */
+.wrow {
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* Waveform. 18px tall with 8px of vertical padding, which leaves a 2px band —
+   so a bar at rest is a 2px dot and only the transform makes it tall. */
 .wwave {
   display: inline-flex;
   flex-direction: row;
   justify-content: center;
   align-items: center;
   flex-shrink: 0;
+  width: auto;
   height: 18px;
-  padding: 4px 8px;
+  padding: 8px 4px;
   gap: 2px;
   --audio-scale: 1;
-  transition: all 0.1s var(--w-ease-collapse);
+  transition: all 0.1s var(--w-ease);
+}
+.wpill:not(.recording):not(.working) .wwave {
+  /* Rest: the waveform collapses with the capsule rather than being clipped. */
+  width: 13px;
+  height: 5px;
+  padding: 2px 1px;
+  opacity: 0;
 }
 .wwave i {
   width: 2px;
-  flex: none; /* a 2px bar is never allowed to shrink while the capsule morphs */
   min-height: 2px;
+  flex: none;
   border-radius: 0.5px;
   background: color-mix(in srgb, var(--w-ink) 40%, transparent);
   transform-origin: center;
   will-change: transform;
-  transform: scaleY(
-    calc(var(--audio-scale, 1) * var(--bar-height-scale, 1))
-  );
+  transform: scaleY(calc(var(--audio-scale, 1) * var(--bar-height-scale, 1)));
 }
-/* Live mic: bars go solid and ride the shared 1s bounce, staggered outward from
-   the centre by the per-bar delay set in the markup. */
-.wwave.live i {
+/* Mic open: solid, and riding the 1s bounce staggered outward from the centre. */
+.wpill.recording .wwave i,
+.wpill.working .wwave i {
   background: var(--w-ink);
   animation: wwave-bounce 1s infinite ease-in-out;
 }
 @keyframes wwave-bounce {
   0% {
-    transform: scaleY(calc(var(--audio-scale, 1) * var(--bar-height-scale, 1) * 1));
+    transform: scaleY(
+      calc(var(--audio-scale, 1) * var(--bar-height-scale, 1) * 1)
+    );
   }
   20% {
-    transform: scaleY(calc(var(--audio-scale, 1) * var(--bar-height-scale, 1) * 1.2));
+    transform: scaleY(
+      calc(var(--audio-scale, 1) * var(--bar-height-scale, 1) * 1.2)
+    );
   }
   40% {
-    transform: scaleY(calc(var(--audio-scale, 1) * var(--bar-height-scale, 1) * 1.5));
+    transform: scaleY(
+      calc(var(--audio-scale, 1) * var(--bar-height-scale, 1) * 1.5)
+    );
   }
   80% {
-    transform: scaleY(calc(var(--audio-scale, 1) * var(--bar-height-scale, 1) * 1.1));
+    transform: scaleY(
+      calc(var(--audio-scale, 1) * var(--bar-height-scale, 1) * 1.1)
+    );
   }
   90% {
-    transform: scaleY(calc(var(--audio-scale, 1) * var(--bar-height-scale, 1) * 1.3));
+    transform: scaleY(
+      calc(var(--audio-scale, 1) * var(--bar-height-scale, 1) * 1.3)
+    );
   }
   100% {
-    transform: scaleY(calc(var(--audio-scale, 1) * var(--bar-height-scale, 1) * 1));
+    transform: scaleY(
+      calc(var(--audio-scale, 1) * var(--bar-height-scale, 1) * 1)
+    );
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .wwave.live i {
-    animation: none;
-  }
-  .wpill,
-  .wpill-content {
-    transition: none;
+  .wpill.recording .wwave i,
+  .wpill.working .wwave i {
     animation: none;
   }
 }
 
-/* Working (transcribing / polishing): spinner + label in the same capsule, so
-   the change of state is a width morph rather than a new object. */
+/* Working: eight radial ticks fading in sequence, beside the waveform — the
+   lavender is Wispr's, not a theme colour. */
 .wspinner {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  border: 1.5px solid color-mix(in srgb, var(--w-ink) 25%, transparent);
-  border-top-color: var(--w-ink);
-  animation: wspin 0.7s linear infinite;
-  flex: none;
-}
-@keyframes wspin {
-  to {
-    transform: rotate(1turn);
-  }
-}
-.wlabel {
-  font-size: 12px;
-  line-height: 1;
-  color: var(--w-ink);
-  white-space: nowrap;
-  padding-left: 8px;
-  flex: none; /* measured width must not depend on how wide the capsule is yet */
-}
-
-/* Cancel — hidden at rest so the resting bar is only the waveform, revealed on
-   hover the way Wispr reveals its controls. */
-.wx {
-  width: 0;
-  height: 14px;
-  opacity: 0;
-  overflow: hidden;
-  flex: none;
-  padding: 0;
-  border: 0;
-  -webkit-appearance: none;
-  appearance: none;
+  position: relative;
+  width: 16px;
+  height: 16px;
   display: flex;
-  align-items: center;
   justify-content: center;
-  color: var(--w-ink);
-  background: none;
-  cursor: pointer;
-  /* Same duration and curve as the capsule's own morph, so the button and the
-     wall it pushes out move as one thing. */
-  transition:
-    width 400ms var(--w-ease-morph),
-    margin-left 400ms var(--w-ease-morph),
-    opacity 200ms ease;
+  align-items: center;
+  flex: none;
 }
-.wpill:hover .wx {
-  width: 14px;
-  opacity: 0.6;
-  margin-left: 4px;
+.wspinner i {
+  position: absolute;
+  width: 2px;
+  height: 5px;
+  border-radius: 1px;
+  background: rgba(163, 148, 199, 0.3);
+  transform-origin: center center;
+  animation: wspinner-fade 1.1s linear infinite;
 }
-.wpill:hover .wx:hover {
-  opacity: 1;
-}
-.wx svg {
-  width: 9px;
-  height: 9px;
-  display: block;
+@keyframes wspinner-fade {
+  0% {
+    background: rgba(163, 148, 199, 0.88);
+  }
+  100% {
+    background: rgba(163, 148, 199, 0.15);
+  }
 }
