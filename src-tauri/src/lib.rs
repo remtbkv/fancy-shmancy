@@ -174,6 +174,18 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     let history_manager =
         Arc::new(HistoryManager::new(app_handle).expect("Failed to initialize history manager"));
 
+    // A recording that was in flight when the app last died left a playable
+    // safety copy behind. Adopt it before anything else can start writing to
+    // the same directory, so the audio shows up in history to be transcribed
+    // rather than being silently orphaned.
+    for file_name in managers::partial_recording::PartialRecording::recover_orphans(
+        history_manager.recordings_dir(),
+    ) {
+        if let Err(e) = history_manager.save_cancelled_entry(file_name) {
+            log::error!("Recovered a recording but could not file it in history: {e}");
+        }
+    }
+
     // Initialize the transcribe-cpp native backend (logging + backend module
     // registration) once, before any whisper model is loaded.
     managers::transcription::init_transcribe_backend();

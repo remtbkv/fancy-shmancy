@@ -7,6 +7,7 @@ use crate::audio_toolkit::{
     AudioRecorder, SileroVad, VadPolicy,
 };
 use crate::helpers::clamshell;
+use crate::managers::partial_recording::PartialRecording;
 use crate::managers::transcription::{AheadOfStop, StreamRouter};
 use crate::settings::{get_settings, write_settings, AppSettings};
 use crate::utils;
@@ -283,6 +284,7 @@ fn create_audio_recorder(
     selected_channel: Option<u16>,
     stream_router: Arc<StreamRouter>,
     ahead_of_stop: Arc<AheadOfStop>,
+    partial: Arc<PartialRecording>,
 ) -> Result<AudioRecorder, anyhow::Error> {
     // A single Silero engine covers both the offline and streaming policies (never
     // active at once within a recording), so the recorder reconfigures its
@@ -316,9 +318,12 @@ fn create_audio_recorder(
         .with_audio_callback({
             let router = stream_router;
             let ahead = ahead_of_stop;
+            let partial = partial;
             move |frame| {
                 router.feed(frame);
                 ahead.feed(frame);
+                // Third consumer: the copy on disk that outlives the process.
+                partial.feed(frame);
             }
         });
 
@@ -360,6 +365,10 @@ pub struct AudioRecordingManager {
     cancel_generation: Arc<AtomicU64>,
     stream_router: Arc<StreamRouter>,
     ahead_of_stop: Arc<AheadOfStop>,
+    /// Written to as audio arrives, so a recording survives the process dying
+    /// mid-sentence. Stop and cancel both discard it; only a death leaves it
+    /// behind, and the next launch adopts it.
+    partial: Arc<PartialRecording>,
     /// Lock-free mirror of "is the state in {Recording, Stopping}",
     /// maintained by `set_state()`. The hot-path `is_recording()` reads THIS
     /// instead of the std `state` mutex, so a UI poll can no longer deadlock
@@ -407,6 +416,9 @@ impl AudioRecordingManager {
             cancel_generation: Arc::new(AtomicU64::new(0)),
             stream_router,
             ahead_of_stop,
+            partial: Arc::new(PartialRecording::new(
+                crate::managers::partial_recording::recordings_dir(app),
+            )),
             recording_active: Arc::new(AtomicBool::new(false)),
             capture_generation: Arc::new(AtomicU64::new(0)),
             cached_device: Arc::new(Mutex::new(None)),
@@ -615,6 +627,7 @@ impl AudioRecordingManager {
                 settings.selected_channel,
                 Arc::clone(&self.stream_router),
                 Arc::clone(&self.ahead_of_stop),
+                Arc::clone(&self.partial),
             )?);
         }
         Ok(())
@@ -833,6 +846,7 @@ impl AudioRecordingManager {
                             },
                         );
                         debug!("Recording requested for binding {binding_id}");
+                        self.partial.begin(chrono::Utc::now().timestamp());
                         return Ok(RecordingReadiness {
                             receiver,
                             generation,
@@ -914,6 +928,7 @@ impl AudioRecordingManager {
 
     pub fn stop_recording(&self, binding_id: &str, cancel_generation: u64) -> Option<Vec<f32>> {
         self.invalidate_recording_readiness();
+        self.close_safety_copy();
         let mut state = self.state.lock().unwrap();
 
         match *state {
@@ -998,6 +1013,12 @@ impl AudioRecordingManager {
         self.recording_active.load(Ordering::SeqCst)
     }
 
+    /// The safety copy has done its job once a recording ends by a path that
+    /// decides what to do with the audio.
+    fn close_safety_copy(&self) {
+        self.partial.discard();
+    }
+
     /// Cancel any ongoing recording without returning audio samples
     pub fn cancel_recording(&self) {
         let _ = self.cancel_recording_returning_samples();
@@ -1008,6 +1029,7 @@ impl AudioRecordingManager {
     /// caller gets the chance to keep it before it is dropped.
     pub fn cancel_recording_returning_samples(&self) -> Option<Vec<f32>> {
         let mut captured = None;
+        self.close_safety_copy();
         self.invalidate_recording_readiness();
         self.cancel_generation.fetch_add(1, Ordering::AcqRel);
         let mut state = self.state.lock().unwrap();
