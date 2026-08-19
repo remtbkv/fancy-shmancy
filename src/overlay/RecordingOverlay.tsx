@@ -23,10 +23,16 @@ type OverlayState = "recording" | "streaming" | "transcribing" | "processing";
 // the bar settles instead of flickering on consonants.
 const FLOW_BARS = 10;
 const FLOW_BULGE = 1 / 48; // how fast the bulge falls off from the centre bar
-const FLOW_GAIN = 5; // level → scale multiplier
+const FLOW_GAIN = 5; // level → scale multiplier, and the ceiling on it
 const FLOW_FRAME_MS = 1000 / 60;
 const FLOW_BLEND = 0.85; // retained fraction of the previous level, per frame
 const FLOW_SLEW = 1.6; // max level change per second
+// Wispr's gain assumes a loudness that reaches 1 on speech. Handy's loudest FFT
+// bucket only reached ~0.35 on the same dictation — measured off a screen
+// recording with both bars in it, where Wispr's bars threw 10-14pt and these
+// threw 3-4pt. This lifts Handy's scale onto Wispr's without touching the gain,
+// the floor, or the ceiling, so the two bars move through the same range.
+const FLOW_LEVEL_TRIM = 2.9;
 
 const FLOW_BAR_STYLE: React.CSSProperties[] = Array.from(
   { length: FLOW_BARS },
@@ -180,10 +186,8 @@ const RecordingOverlay: React.FC = () => {
       const limit = (dt / 1000) * FLOW_SLEW;
       const step = Math.min(limit, Math.max(-limit, blended - smoothed));
       smoothed = Math.floor((smoothed + step) * 100) / 100;
-      el.style.setProperty(
-        "--audio-scale",
-        String(Math.max(1, FLOW_GAIN * smoothed)),
-      );
+      const scale = FLOW_GAIN * Math.min(1, smoothed * FLOW_LEVEL_TRIM);
+      el.style.setProperty("--audio-scale", String(Math.max(1, scale)));
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
