@@ -91,6 +91,9 @@ const RecordingOverlay: React.FC = () => {
   // --audio-scale every bar reads from.
   const flowLevelRef = useRef(0);
   const flowWaveRef = useRef<HTMLDivElement>(null);
+  // Mirrors captureReady so the level listener can clear the arming state
+  // without a set-state call on every packet.
+  const captureReadyRef = useRef(false);
   // Live-text scroll-back: the text region "sticks" to the newest line while the
   // user is at the bottom; if they scroll up to read history, auto-follow pauses
   // until they scroll back down.
@@ -106,6 +109,7 @@ const RecordingOverlay: React.FC = () => {
         // recording-ready while the awaits below are in flight; resetting after
         // them would overwrite that event and leave the overlay stuck arming.
         if (overlayState === "recording" || overlayState === "streaming") {
+          captureReadyRef.current = false;
           setCaptureReady(false);
           setStreamText({ committed: "", tentative: "" });
         }
@@ -135,11 +139,13 @@ const RecordingOverlay: React.FC = () => {
 
       const unlistenHide = await listen("hide-overlay", () => {
         setIsVisible(false);
+        captureReadyRef.current = false;
         setCaptureReady(false);
       });
 
       const unlistenReady = await listen("recording-ready", () => {
         setElapsed(0);
+        captureReadyRef.current = true;
         setCaptureReady(true);
       });
 
@@ -150,6 +156,15 @@ const RecordingOverlay: React.FC = () => {
         const payload = event.payload as number[];
         const db = payload[FLOW_BUCKETS];
         if (db === undefined) return;
+        // Levels only flow from a live microphone, so this is proof of capture
+        // in its own right — and unlike `recording-ready` it cannot be missed.
+        // With a quiet window configured the overlay is shown *after* readiness
+        // fires, and the reset above would otherwise strand the bar arming for
+        // the whole recording.
+        if (!captureReadyRef.current) {
+          captureReadyRef.current = true;
+          setCaptureReady(true);
+        }
         if (db < flowFloorDb) flowFloorDb = Math.max(FLOW_FLOOR_MIN_DB, db);
         flowLevelRef.current = Math.min(
           1,
