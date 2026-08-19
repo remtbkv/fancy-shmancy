@@ -27,12 +27,17 @@ const FLOW_GAIN = 5; // level → scale multiplier, and the ceiling on it
 const FLOW_FRAME_MS = 1000 / 60;
 const FLOW_BLEND = 0.85; // retained fraction of the previous level, per frame
 const FLOW_SLEW = 1.6; // max level change per second
-// Wispr's gain assumes a loudness that reaches 1 on speech. Handy's loudest FFT
-// bucket only reached ~0.35 on the same dictation — measured off a screen
-// recording with both bars in it, where Wispr's bars threw 10-14pt and these
-// threw 3-4pt. This lifts Handy's scale onto Wispr's without touching the gain,
-// the floor, or the ceiling, so the two bars move through the same range.
-const FLOW_LEVEL_TRIM = 2.9;
+// Loudness → level, lifted from Wispr Flow's main process verbatim: keep a floor
+// that only ever descends to the quietest dB this run has seen (never below
+// -60 dBFS), and read the level as how far above that floor the current window
+// sits, over a 20 dB span. Nothing here is tuned to a particular mic — a loud
+// setup and a quiet one both end up using the same top of the range, which is
+// the point. The floor lives outside the component so it survives across
+// recordings, as Wispr's does across a session.
+const FLOW_BUCKETS = 16; // levels[FLOW_BUCKETS] is the dBFS the recorder rides along
+const FLOW_FLOOR_MIN_DB = -60;
+const FLOW_RANGE_DB = 20;
+let flowFloorDb = 0;
 
 const FLOW_BAR_STYLE: React.CSSProperties[] = Array.from(
   { length: FLOW_BARS },
@@ -124,15 +129,17 @@ const RecordingOverlay: React.FC = () => {
       });
 
       const unlistenLevel = await listen<number[]>("mic-level", (event) => {
-        // Mic levels arrive as 16 log-spaced FFT buckets, each already curved
-        // into 0-1. The flow bar wants one loudness number: take the loudest
-        // bucket, not the mean — speech energy sits in a handful of low buckets,
-        // so averaging across all sixteen buries it and the bar barely moves.
-        // Smoothing happens on the render loop, not here.
-        const newLevels = event.payload as number[];
-        let peak = 0;
-        for (const v of newLevels) if (v > peak) peak = v;
-        flowLevelRef.current = peak;
+        // The payload is the 16 FFT buckets with the window's dBFS appended.
+        // Let the floor settle to the quietest thing heard, then read the level
+        // off it. Smoothing happens on the render loop, not here.
+        const payload = event.payload as number[];
+        const db = payload[FLOW_BUCKETS];
+        if (db === undefined) return;
+        if (db < flowFloorDb) flowFloorDb = Math.max(FLOW_FLOOR_MIN_DB, db);
+        flowLevelRef.current = Math.min(
+          1,
+          Math.max(0, (db - flowFloorDb) / FLOW_RANGE_DB),
+        );
       });
 
       const unlistenStream = await events.streamTextEvent.listen((event) => {
@@ -186,8 +193,10 @@ const RecordingOverlay: React.FC = () => {
       const limit = (dt / 1000) * FLOW_SLEW;
       const step = Math.min(limit, Math.max(-limit, blended - smoothed));
       smoothed = Math.floor((smoothed + step) * 100) / 100;
-      const scale = FLOW_GAIN * Math.min(1, smoothed * FLOW_LEVEL_TRIM);
-      el.style.setProperty("--audio-scale", String(Math.max(1, scale)));
+      el.style.setProperty(
+        "--audio-scale",
+        String(Math.max(1, FLOW_GAIN * smoothed)),
+      );
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);

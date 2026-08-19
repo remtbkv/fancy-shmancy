@@ -807,8 +807,14 @@ fn run_consumer(
         // are reset on Cmd::Start (visualizer.reset() / frame_resampler.reset()),
         // so they resume cleanly the moment recording begins.
         if recording {
-            if let Some(buckets) = visualizer.feed(&raw) {
+            if let Some(mut buckets) = visualizer.feed(&raw) {
                 if let Some(cb) = &level_cb {
+                    // The overlay's flow bar calibrates itself against a running
+                    // noise floor, which needs a real loudness rather than the
+                    // clamped, curve-shaped bucket values. Ride it along as one
+                    // extra element instead of a second event, so the emission
+                    // rate the overlay window sees is unchanged.
+                    buckets.push(visualizer.last_dbfs());
                     cb(buckets);
                 }
             }

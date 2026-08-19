@@ -7,6 +7,9 @@ use std::sync::Arc;
 // than absolute dBFS. The old -55/-8 left speech ~1 px above the overlay's
 // floor, which reads as a frozen waveform (#1694). Not lowered past -68: at
 // -70 a noisy room starts making the idle waveform twitch.
+/// What an all-zero window reports, so a dropout is distinguishable from quiet.
+pub const DBFS_SILENT: f32 = -200.0;
+
 const DB_MIN: f32 = -68.0;
 const DB_MAX: f32 = -30.0;
 const GAIN: f32 = 1.3;
@@ -21,6 +24,11 @@ pub struct AudioVisualiser {
     buffer: Vec<f32>,
     window_size: usize,
     buckets: usize,
+    /// RMS of the most recent analysed window, in dBFS. The overlay's flow bar
+    /// wants a single loudness in dB rather than the perceptual bucket values,
+    /// because it calibrates itself against a running noise floor and the
+    /// buckets are already clamped and curve-shaped.
+    last_dbfs: f32,
 }
 
 impl AudioVisualiser {
@@ -80,6 +88,7 @@ impl AudioVisualiser {
             buffer: Vec::with_capacity(window_size * 2),
             window_size,
             buckets,
+            last_dbfs: DBFS_SILENT,
         }
     }
 
@@ -94,6 +103,11 @@ impl AudioVisualiser {
 
         // Take the required window of samples
         let window_samples = &self.buffer[..self.window_size];
+
+        // Loudness of this window, before any windowing or bucketing.
+        let mean_square =
+            window_samples.iter().map(|s| s * s).sum::<f32>() / self.window_size as f32;
+        self.last_dbfs = 20.0 * (mean_square.sqrt() + 1e-10).log10();
 
         // Remove DC component
         let mean = window_samples.iter().sum::<f32>() / self.window_size as f32;
@@ -154,9 +168,61 @@ impl AudioVisualiser {
         Some(buckets)
     }
 
+    /// RMS of the last analysed window in dBFS, or `DBFS_SILENT` before the
+    /// first full window.
+    pub fn last_dbfs(&self) -> f32 {
+        self.last_dbfs
+    }
+
     pub fn reset(&mut self) {
         self.buffer.clear();
         // Reset noise floor to initial values
         self.noise_floor.fill(-40.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn viz() -> AudioVisualiser {
+        AudioVisualiser::new(16_000, 512, 16, 400.0, 4000.0)
+    }
+
+    /// The overlay's flow bar reads this instead of the buckets, so it has to be
+    /// a real dBFS figure: full scale is 0 dB, and halving the amplitude costs
+    /// 6 dB. The buckets are clamped to a 38 dB window and curve-shaped, which
+    /// is why they can't stand in for it.
+    #[test]
+    fn last_dbfs_reports_window_rms_in_dbfs() {
+        let mut v = viz();
+        let full_scale: Vec<f32> = (0..512).map(|_| 1.0).collect();
+        v.feed(&full_scale).expect("a full window produces buckets");
+        assert!(
+            v.last_dbfs().abs() < 0.01,
+            "full-scale DC should read 0 dBFS, got {}",
+            v.last_dbfs()
+        );
+
+        let half: Vec<f32> = (0..512).map(|_| 0.5).collect();
+        v.feed(&half).unwrap();
+        assert!(
+            (v.last_dbfs() + 6.02).abs() < 0.05,
+            "half amplitude should read about -6 dBFS, got {}",
+            v.last_dbfs()
+        );
+    }
+
+    /// A dropout has to stay distinguishable from a quiet room, or the flow
+    /// bar's floor latches onto it and every later pause reads as speech.
+    #[test]
+    fn digital_silence_reads_far_below_any_room_tone() {
+        let mut v = viz();
+        v.feed(&vec![0.0f32; 512]).unwrap();
+        assert!(
+            v.last_dbfs() <= DBFS_SILENT,
+            "silence should be at or below {DBFS_SILENT} dBFS, got {}",
+            v.last_dbfs()
+        );
     }
 }
