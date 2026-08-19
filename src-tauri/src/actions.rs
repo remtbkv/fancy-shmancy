@@ -799,7 +799,8 @@ impl ShortcutAction for TranscribeAction {
                         Err(err) => Err(err),
                     };
 
-                    // Await WAV save and verify
+                    // Await WAV save and verify. Once this lands the audio has a
+                    // home, and the safety copy guarding it can be released.
                     let wav_saved = match wav_handle.await {
                         Ok(Ok(())) => {
                             match crate::audio_toolkit::verify_wav_file(
@@ -822,6 +823,14 @@ impl ShortcutAction for TranscribeAction {
                             false
                         }
                     };
+
+                    // The take is on disk under its own name now, so the copy
+                    // that was guarding it against a crash can go. A failed save
+                    // deliberately keeps it: the next launch will adopt it
+                    // rather than let the recording vanish.
+                    if wav_saved {
+                        rm.release_safety_copy();
+                    }
 
                     if rm.was_cancelled_since(cancel_generation) {
                         debug!("Transcription operation cancelled before output handling");

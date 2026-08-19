@@ -280,7 +280,8 @@ struct MicrophoneResolution {
 
 /// Speech is held for this long past the last frame the VAD passed, so the bar
 /// rides through the gaps between words instead of collapsing on every breath.
-const SPEECH_HOLD_MS: u64 = 250;
+/// Only the *fall* is delayed by this; nothing gates the rise.
+const SPEECH_HOLD_MS: u64 = 200;
 
 /// Wall-clock milliseconds. Only ever used as a difference between two reads.
 fn now_ms() -> u64 {
@@ -955,7 +956,6 @@ impl AudioRecordingManager {
 
     pub fn stop_recording(&self, binding_id: &str, cancel_generation: u64) -> Option<Vec<f32>> {
         self.invalidate_recording_readiness();
-        self.close_safety_copy();
         let mut state = self.state.lock().unwrap();
 
         match *state {
@@ -1040,9 +1040,10 @@ impl AudioRecordingManager {
         self.recording_active.load(Ordering::SeqCst)
     }
 
-    /// The safety copy has done its job once a recording ends by a path that
-    /// decides what to do with the audio.
-    fn close_safety_copy(&self) {
+    /// Drop the safety copy. Call this only once the audio it was guarding has
+    /// been written somewhere else — releasing it at stop rather than after the
+    /// real WAV lands leaves a window where a crash loses the take.
+    pub fn release_safety_copy(&self) {
         self.partial.discard();
     }
 
@@ -1056,7 +1057,6 @@ impl AudioRecordingManager {
     /// caller gets the chance to keep it before it is dropped.
     pub fn cancel_recording_returning_samples(&self) -> Option<Vec<f32>> {
         let mut captured = None;
-        self.close_safety_copy();
         self.invalidate_recording_readiness();
         self.cancel_generation.fetch_add(1, Ordering::AcqRel);
         let mut state = self.state.lock().unwrap();

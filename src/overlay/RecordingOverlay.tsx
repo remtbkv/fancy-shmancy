@@ -36,6 +36,12 @@ const FLOW_SLEW = 1.6; // max level change per second
 // recordings, as Wispr's does across a session.
 const FLOW_BUCKETS = 16; // levels[FLOW_BUCKETS] is the dBFS the recorder rides along
 const FLOW_SPEECH = 17; // levels[FLOW_SPEECH] is 1 while the VAD is passing frames
+// How many level packets in a row have to disagree before the bar is pulled
+// down. Packets arrive about every 33ms, so two is ~66ms — long enough for the
+// VAD to have had its say, short enough that a suppressed twitch reads as the
+// bar settling rather than as a lag. Nothing gates the rise: sound moves the
+// bar on the very first packet, and only staying un-voiced takes it away.
+const FLOW_SUPPRESS_AFTER_PACKETS = 2;
 const FLOW_FLOOR_MIN_DB = -60;
 const FLOW_RANGE_DB = 20;
 let flowFloorDb = 0;
@@ -95,6 +101,8 @@ const RecordingOverlay: React.FC = () => {
   // Mirrors captureReady so the level listener can clear the arming state
   // without a set-state call on every packet.
   const captureReadyRef = useRef(false);
+  // Consecutive packets the VAD has not called speech.
+  const unvoicedRunRef = useRef(0);
   // Live-text scroll-back: the text region "sticks" to the newest line while the
   // user is at the bottom; if they scroll up to read history, auto-follow pauses
   // until they scroll back down.
@@ -111,6 +119,7 @@ const RecordingOverlay: React.FC = () => {
         // them would overwrite that event and leave the overlay stuck arming.
         if (overlayState === "recording" || overlayState === "streaming") {
           captureReadyRef.current = false;
+          unvoicedRunRef.current = 0;
           setCaptureReady(false);
           setStreamText({ committed: "", tentative: "" });
         }
@@ -171,13 +180,19 @@ const RecordingOverlay: React.FC = () => {
           1,
           Math.max(0, (db - flowFloorDb) / FLOW_RANGE_DB),
         );
-        // A room is not a voice. The recorder marks windows the VAD passed, and
-        // the bar answers only those — in a café the level is still tracked (so
-        // the floor keeps calibrating) but the bars rest until someone speaks.
+        // A room is not a voice. The recorder marks the windows its VAD passed;
+        // sustained disagreement pulls the bar down, but the first packets of
+        // any sound always get through, so the bar never lags a real voice.
         // Falling back to reacting when the flag is absent keeps this working
         // against a build that doesn't send it.
         const speech = payload[FLOW_SPEECH];
-        flowLevelRef.current = speech === undefined || speech > 0 ? level : 0;
+        if (speech === undefined || speech > 0) {
+          unvoicedRunRef.current = 0;
+        } else {
+          unvoicedRunRef.current += 1;
+        }
+        const suppressed = unvoicedRunRef.current > FLOW_SUPPRESS_AFTER_PACKETS;
+        flowLevelRef.current = suppressed ? 0 : level;
       });
 
       const unlistenStream = await events.streamTextEvent.listen((event) => {

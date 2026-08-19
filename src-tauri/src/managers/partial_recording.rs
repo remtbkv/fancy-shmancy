@@ -122,6 +122,10 @@ impl PartialRecording {
     /// starts while another is still open means the earlier one already ended
     /// by a path that should have closed it.
     pub fn begin(&self, timestamp: i64) {
+        // Whatever is still open belongs to a recording that already ended, and
+        // leaving its file behind would have the next launch adopt a take that
+        // was already kept.
+        self.discard();
         let path = self.dir.join(format!("handy-{timestamp}{PARTIAL_SUFFIX}"));
         match Writer::create(path.clone()) {
             Ok(w) => {

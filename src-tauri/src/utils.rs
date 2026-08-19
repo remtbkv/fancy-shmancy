@@ -90,7 +90,7 @@ pub fn cancel_current_operation_from(app: &AppHandle, source: &str) {
     let audio_manager = app.state::<Arc<AudioRecordingManager>>();
     let recording_was_active = audio_manager.is_recording();
     let cancelled_samples = audio_manager.cancel_recording_returning_samples();
-    keep_cancelled_recording(app, cancelled_samples);
+    keep_cancelled_recording(app, cancelled_samples, Arc::clone(&audio_manager));
 
     // Abandon any live streaming transcription
     let tm = app.state::<Arc<TranscriptionManager>>();
@@ -126,17 +126,26 @@ const CANCELLED_KEEP_MIN_SAMPLES: usize = 12_000; // 0.75s at 16 kHz
 /// history with no transcript. Escaping out of a recording is nearly always a
 /// slip, and this is the only copy of what was said — retry from history turns
 /// it into text.
-fn keep_cancelled_recording(app: &AppHandle, samples: Option<Vec<f32>>) {
-    let Some(samples) = samples else { return };
+fn keep_cancelled_recording(
+    app: &AppHandle,
+    samples: Option<Vec<f32>>,
+    recorder: Arc<AudioRecordingManager>,
+) {
+    let Some(samples) = samples else {
+        recorder.release_safety_copy();
+        return;
+    };
     if samples.len() < CANCELLED_KEEP_MIN_SAMPLES {
         debug!(
             "Cancelled recording was only {} samples; not keeping it",
             samples.len()
         );
+        recorder.release_safety_copy();
         return;
     }
 
     let Some(history) = app.try_state::<Arc<crate::managers::history::HistoryManager>>() else {
+        recorder.release_safety_copy();
         return;
     };
     let history = Arc::clone(&history);
@@ -150,7 +159,10 @@ fn keep_cancelled_recording(app: &AppHandle, samples: Option<Vec<f32>>) {
         }
         if let Err(e) = history.save_cancelled_entry(file_name) {
             error!("Failed to file the cancelled recording in history: {e}");
+            return;
         }
+        // The audio is somewhere else now, so the guard can go.
+        recorder.release_safety_copy();
     });
 }
 
