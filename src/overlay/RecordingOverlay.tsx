@@ -14,15 +14,39 @@ import { getLanguageDirection } from "@/lib/utils/rtl";
 
 type OverlayState = "recording" | "streaming" | "transcribing" | "processing";
 
-// Number of reactive bars in the waveform (the simple, smoothed style shared by
-// every overlay form). Mic levels arrive as 16 FFT buckets; we take the first N.
-const WAVE_BARS = 9;
+// ---- Flow bar ---------------------------------------------------------------
+// The compact overlay is a copy of Wispr Flow's status bar, down to the numbers:
+// ten bars, each with a fixed bulge factor that fattens the middle of the row,
+// and a delay ramp that runs 0 → 0.4s outward from the centre and negative on
+// the far half, so the bounce sweeps symmetrically. Level is smoothed the same
+// way too — an exponential blend per frame with a hard slew limit — which is why
+// the bar settles instead of flickering on consonants.
+const FLOW_BARS = 10;
+const FLOW_BULGE = 1 / 48; // how fast the bulge falls off from the centre bar
+const FLOW_GAIN = 5; // level → scale multiplier
+const FLOW_FRAME_MS = 1000 / 60;
+const FLOW_BLEND = 0.85; // retained fraction of the previous level, per frame
+const FLOW_SLEW = 1.6; // max level change per second
+
+const FLOW_BAR_STYLE: React.CSSProperties[] = Array.from(
+  { length: FLOW_BARS },
+  (_, i) => {
+    const distance = Math.abs((FLOW_BARS - 1) / 2 - i);
+    const half = Math.ceil(FLOW_BARS / 2);
+    return {
+      "--bar-height-scale": Math.max(
+        0,
+        1 - Math.pow(distance, 2) * FLOW_BULGE,
+      ),
+      animationDelay: `${0.1 * (i < half ? i : i - FLOW_BARS)}s`,
+    } as React.CSSProperties;
+  },
+);
 
 const RecordingOverlay: React.FC = () => {
   const { t } = useTranslation();
   const [isVisible, setIsVisible] = useState(false);
   const [state, setState] = useState<OverlayState>("recording");
-  const [levels, setLevels] = useState<number[]>(Array(WAVE_BARS).fill(0));
   const [streamText, setStreamText] = useState<StreamTextEvent>({
     committed: "",
     tentative: "",
@@ -40,7 +64,12 @@ const RecordingOverlay: React.FC = () => {
   // while overflowing, so the resting first line stays crisp flush under the pill.
   const [overflowing, setOverflowing] = useState(false);
 
-  const smoothedLevelsRef = useRef<number[]>(Array(16).fill(0));
+  // Flow bar: the raw loudness the mic reported last, and the element whose
+  // --audio-scale every bar reads from.
+  const flowLevelRef = useRef(0);
+  const flowWaveRef = useRef<HTMLDivElement>(null);
+  const pillRef = useRef<HTMLDivElement>(null);
+  const pillContentRef = useRef<HTMLDivElement>(null);
   // Live-text scroll-back: the text region "sticks" to the newest line while the
   // user is at the bottom; if they scroll up to read history, auto-follow pauses
   // until they scroll back down.
@@ -83,15 +112,15 @@ const RecordingOverlay: React.FC = () => {
       });
 
       const unlistenLevel = await listen<number[]>("mic-level", (event) => {
+        // Mic levels arrive as 16 log-spaced FFT buckets, each already curved
+        // into 0-1. The flow bar wants one loudness number: take the loudest
+        // bucket, not the mean — speech energy sits in a handful of low buckets,
+        // so averaging across all sixteen buries it and the bar barely moves.
+        // Smoothing happens on the render loop, not here.
         const newLevels = event.payload as number[];
-        // Exponential smoothing across the 16 buckets, then take the first N
-        // bars for the shared waveform.
-        const smoothed = smoothedLevelsRef.current.map((prev, i) => {
-          const target = newLevels[i] || 0;
-          return prev * 0.7 + target * 0.3;
-        });
-        smoothedLevelsRef.current = smoothed;
-        setLevels(smoothed.slice(0, WAVE_BARS));
+        let peak = 0;
+        for (const v of newLevels) if (v > peak) peak = v;
+        flowLevelRef.current = peak;
       });
 
       const unlistenStream = await events.streamTextEvent.listen((event) => {
@@ -123,6 +152,58 @@ const RecordingOverlay: React.FC = () => {
     return () => clearInterval(id);
   }, [state, isVisible]);
 
+  // Drive the flow bar's --audio-scale on its own frame loop rather than from
+  // React state: the bars are CSS transforms, so a per-frame variable write
+  // costs one style recalc instead of a re-render per mic packet.
+  useEffect(() => {
+    if (!isVisible) return;
+    let raf = 0;
+    let last: number | null = null;
+    let smoothed = 0;
+    const tick = (now: number) => {
+      raf = requestAnimationFrame(tick);
+      const el = flowWaveRef.current;
+      if (!el) return;
+      const dt = Math.min(Math.max(last === null ? FLOW_FRAME_MS : now - last, 1), 200);
+      last = now;
+      const blend = Math.pow(FLOW_BLEND, dt / FLOW_FRAME_MS);
+      const blended = smoothed * blend + flowLevelRef.current * (1 - blend);
+      const limit = (dt / 1000) * FLOW_SLEW;
+      const step = Math.min(limit, Math.max(-limit, blended - smoothed));
+      smoothed = Math.floor((smoothed + step) * 100) / 100;
+      el.style.setProperty(
+        "--audio-scale",
+        String(Math.max(1, FLOW_GAIN * smoothed)),
+      );
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [isVisible]);
+
+  // Measure what the capsule is holding and write the width back as a px value.
+  // The pill starts at the width of Wispr's resting nub, so the first pass after
+  // paint is the grow-in; every later pass (recording → transcribing, cancel
+  // revealed on hover) is the same 400ms morph between two real numbers.
+  useEffect(() => {
+    const pill = pillRef.current;
+    const content = pillContentRef.current;
+    if (!pill || !content) return;
+    const PILL_CHROME = 26; // 12px padding a side, plus the 1px hairline
+    const apply = () => {
+      // offsetWidth, not the bounding rect: the content is mid pop-in (scaled
+      // 0.9 → 1) on the first pass, and a transformed rect would lock the pill
+      // to a width ~8% short of what it ends up holding.
+      pill.style.setProperty(
+        "--w-pill-w",
+        `${content.offsetWidth + PILL_CHROME}px`,
+      );
+    };
+    apply();
+    const observer = new ResizeObserver(apply);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [isVisible, state]);
+
   // Stick to the bottom as text streams in — but only while pinned, so a user who
   // has scrolled up to read history isn't yanked back down by the next chunk.
   useLayoutEffect(() => {
@@ -152,17 +233,31 @@ const RecordingOverlay: React.FC = () => {
     `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
   // ---- Shared building blocks (one visual language for every overlay form) ----
-  const waveform = (
-    <div className="swave">
-      {levels.map((v, i) => (
-        <i
-          key={i}
-          style={{
-            height: `${Math.max(3, Math.min(18, 3 + Math.pow(v, 0.7) * 15))}px`,
-          }}
-        />
+  // Flow-bar waveform: ten bars whose scale comes entirely from CSS (the shared
+  // --audio-scale on this element, times each bar's own bulge factor).
+  const flowWave = (
+    <div ref={flowWaveRef} className="wwave live">
+      {FLOW_BAR_STYLE.map((barStyle, i) => (
+        <i key={i} style={barStyle} />
       ))}
     </div>
+  );
+
+  const flowCancel = (
+    <button
+      className="wx"
+      aria-label="cancel"
+      onClick={() => commands.cancelOperation()}
+    >
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <path
+          d="M4 4 L12 12 M12 4 L4 12"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+        />
+      </svg>
+    </button>
   );
 
   const cancelBtn = (
@@ -189,7 +284,7 @@ const RecordingOverlay: React.FC = () => {
       <div className="sbase-l">
         <span className="sdot" />
       </div>
-      {waveform}
+      {flowWave}
       <div className="sbase-r">
         {showTimer && <span className="stimer">{fmtTime(elapsed)}</span>}
         {showCancel && cancelBtn}
@@ -261,9 +356,10 @@ const RecordingOverlay: React.FC = () => {
     );
   }
 
-  // ---- Minimal overlay: exactly one row at a time — waveform (recording), or a
-  // spinner + label (transcribing / processing). Never both. The pill animates its
-  // width between them; the cancel button is in both rows so it stays put.
+  // ---- Minimal overlay: the flow bar. A capsule that hugs its content and holds
+  // exactly one thing at a time — the waveform while recording, a spinner and a
+  // label while transcribing. The change between them is a width morph, so the
+  // capsule reads as one object throughout. Cancel appears on hover.
   const working = state === "transcribing" || state === "processing";
   const workLabel =
     state === "processing"
@@ -275,10 +371,18 @@ const RecordingOverlay: React.FC = () => {
       dir={direction}
       className={`ov-stage ${position} ov-fade ${isVisible ? "show" : ""}`}
     >
-      <div
-        className={`scard compact ${working && isVisible ? "cworking" : ""}`}
-      >
-        {working ? workingRow(workLabel, true) : listeningRow(false, true)}
+      <div className="wpill" ref={pillRef}>
+        <div className="wpill-content" ref={pillContentRef}>
+          {working ? (
+            <>
+              <span className="wspinner" />
+              <span className="wlabel">{workLabel}</span>
+            </>
+          ) : (
+            flowWave
+          )}
+          {flowCancel}
+        </div>
       </div>
     </div>
   );
