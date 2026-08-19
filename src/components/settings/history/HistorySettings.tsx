@@ -318,6 +318,30 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
 
   const hasTranscription = entry.transcription_text.trim().length > 0;
 
+  // Whether the clamp actually cuts anything off. A character count can't tell:
+  // the same length wraps to a different number of lines at another width.
+  const textRef = useRef<HTMLParagraphElement>(null);
+  const [clamped, setClamped] = useState(false);
+  const clampable = !retrying && hasTranscription;
+
+  useEffect(() => {
+    const el = textRef.current;
+    if (!el || !clampable) {
+      setClamped(false);
+      return;
+    }
+    // Expanded means nothing is clamped to measure; keep the last verdict so
+    // the "Show less" button doesn't vanish under the user's cursor.
+    if (expanded) {
+      return;
+    }
+    const measure = () => setClamped(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [clampable, expanded, entry.transcription_text]);
+
   const handleLoadAudio = useCallback(
     () => getAudioUrl(entry.file_name),
     [getAudioUrl, entry.file_name],
@@ -430,13 +454,16 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
       </div>
 
       <p
-        className={`italic text-sm pb-2 ${
+        ref={textRef}
+        // No bottom padding: `overflow: hidden` clips at the padding edge, so
+        // padding under a clamped paragraph shows a sliced-off line of text.
+        className={`italic text-sm ${
           retrying
             ? ""
             : hasTranscription
               ? "text-text/90 select-text cursor-text whitespace-pre-wrap break-words"
               : "text-text/40"
-        } ${!retrying && hasTranscription && !expanded ? "line-clamp-[10]" : ""}`}
+        } ${clampable && !expanded ? "line-clamp-[10]" : ""}`}
         style={
           retrying
             ? { animation: "transcribe-pulse 3s ease-in-out infinite" }
@@ -459,7 +486,7 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
       </p>
 
       {/* A long dictation would otherwise push every other entry off the page. */}
-      {!retrying && hasTranscription && entry.transcription_text.length > 420 && (
+      {clampable && clamped && (
         <button
           onClick={() => setExpanded((open) => !open)}
           className="text-xs text-logo-primary/90 hover:text-logo-primary pb-2 cursor-pointer"

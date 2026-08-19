@@ -1387,7 +1387,7 @@ impl TranscriptionManager {
         let worked_ahead = self.ahead.finish();
 
         let Some(window) = self.short_form_window() else {
-            return self.transcribe_once(audio);
+            return Ok(drop_echoed_sentence(&self.transcribe_once(audio)?));
         };
 
         // What the worker already got through while the recording was running.
@@ -1399,7 +1399,7 @@ impl TranscriptionManager {
         };
 
         if done == 0 && audio.len() <= window {
-            return self.transcribe_once(audio);
+            return Ok(drop_echoed_sentence(&self.transcribe_once(audio)?));
         }
 
         let pieces = split_audio_on_quiet(&audio[done..], window);
@@ -1422,7 +1422,7 @@ impl TranscriptionManager {
                 parts.push(text.to_string());
             }
         }
-        Ok(parts.join(" "))
+        Ok(drop_echoed_sentence(&parts.join(" ")))
     }
 
     fn transcribe_once(&self, audio: Vec<f32>) -> Result<String> {
@@ -2394,6 +2394,67 @@ fn cut_point(audio: &[f32], max_len: usize) -> usize {
     cut
 }
 
+/// A sentence has to be at least this long before a verbatim repeat of it is
+/// read as the decoder echoing rather than the speaker repeating themselves.
+const ECHO_MIN_CHARS: usize = 40;
+
+/// Drop a sentence the decoder wrote out twice in a row. Cohere-transcribe does
+/// this every few hundred dictations: one stretch of speech, decoded once,
+/// emitted twice. The audio is accounted for exactly (each sample reaches the
+/// model once), so there is nothing upstream to fix, and the decoder exposes no
+/// repetition penalty to turn down.
+///
+/// Only an exact, adjacent repeat of a long sentence is dropped — short ones
+/// ("Yeah." "Right.") are things people really do say twice.
+fn drop_echoed_sentence(text: &str) -> String {
+    let mut kept: Vec<&str> = Vec::new();
+    let mut dropped = 0;
+    for sentence in sentences(text) {
+        let echo = kept.last().is_some_and(|previous: &&str| {
+            *previous == sentence && sentence.chars().count() >= ECHO_MIN_CHARS
+        });
+        if echo {
+            dropped += 1;
+            debug!("Dropped a sentence the decoder repeated verbatim: {sentence}");
+        } else {
+            kept.push(sentence);
+        }
+    }
+    // Left alone when there was nothing to drop, so the transcript keeps
+    // whatever spacing the model gave it.
+    if dropped == 0 {
+        return text.to_string();
+    }
+    kept.join(" ")
+}
+
+/// `text` split on sentence ends, trimmed and without the empties. The
+/// terminator stays with its sentence.
+fn sentences(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let bytes = text.as_bytes();
+    for (i, ch) in text.char_indices() {
+        let ends_sentence = matches!(ch, '.' | '!' | '?')
+            && bytes
+                .get(i + ch.len_utf8())
+                .is_none_or(|next| next.is_ascii_whitespace());
+        if ends_sentence {
+            let end = i + ch.len_utf8();
+            let sentence = text[start..end].trim();
+            if !sentence.is_empty() {
+                out.push(sentence);
+            }
+            start = end;
+        }
+    }
+    let tail = text[start..].trim();
+    if !tail.is_empty() {
+        out.push(tail);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2551,6 +2612,54 @@ mod tests {
     fn a_window_of_zero_is_not_a_division_by_zero() {
         let audio = vec![0.1f32; 100];
         assert_eq!(split_audio_on_quiet(&audio, 0), vec![audio]);
+    }
+
+    /// The real one, from the 17:31 dictation on 2026-08-15: a 39s window whose
+    /// decode wrote the middle sentence out twice.
+    #[test]
+    fn a_sentence_the_decoder_wrote_twice_is_written_once() {
+        let echoed = "And assuming we can look at the board, I don't know how good we are looking \
+             at the boards though. If you look at the messages in the past week, I probably said \
+             this almost every other day. If you look at the messages in the past week, I probably \
+             said this almost every other day. Like, oh, we need to start working on it.";
+        assert_eq!(
+            drop_echoed_sentence(echoed),
+            "And assuming we can look at the board, I don't know how good we are looking at the \
+             boards though. If you look at the messages in the past week, I probably said this \
+             almost every other day. Like, oh, we need to start working on it."
+        );
+    }
+
+    #[test]
+    fn a_sentence_short_enough_to_really_say_twice_is_kept() {
+        let said = "Yeah. Yeah. I don't know what frame this is. I don't know what frame this is.";
+        assert_eq!(drop_echoed_sentence(said), said);
+    }
+
+    #[test]
+    fn a_long_sentence_repeated_later_is_kept() {
+        let said = "If you look at the messages in the past week, I probably said this almost \
+             every other day. Like, oh, we need to start working on it. If you look at the \
+             messages in the past week, I probably said this almost every other day.";
+        assert_eq!(drop_echoed_sentence(said), said);
+    }
+
+    #[test]
+    fn a_transcript_with_nothing_repeated_comes_back_untouched() {
+        let said = "Okay, so down to the built never scored section, we have the arrow and mask \
+             constraint.\nAnd I was wondering why this hasn't been tested or built.";
+        assert_eq!(drop_echoed_sentence(said), said);
+    }
+
+    #[test]
+    fn a_sentence_written_three_times_is_written_once() {
+        let echoed = "This is the one long sentence that the decoder got stuck on, over and over. \
+             This is the one long sentence that the decoder got stuck on, over and over. This is \
+             the one long sentence that the decoder got stuck on, over and over.";
+        assert_eq!(
+            drop_echoed_sentence(echoed),
+            "This is the one long sentence that the decoder got stuck on, over and over."
+        );
     }
 
     #[test]

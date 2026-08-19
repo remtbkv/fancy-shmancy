@@ -7,6 +7,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Play, Pause } from "lucide-react";
 
 interface AudioPlayerProps {
@@ -23,6 +24,12 @@ interface AudioPlayerProps {
 interface AudioPlayerGroupContextValue {
   requestPlayback: (audio: HTMLAudioElement) => void;
   releasePlayback: (audio: HTMLAudioElement) => void;
+  /**
+   * Register a player's "drop the audio entirely" callback, called with
+   * `idleOnly` when playback in progress should be left alone. Returns its
+   * remover.
+   */
+  registerUnload: (unload: (idleOnly: boolean) => void) => () => void;
 }
 
 const AudioPlayerGroupContext =
@@ -32,6 +39,7 @@ export const AudioPlayerGroup: React.FC<React.PropsWithChildren> = ({
   children,
 }) => {
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
+  const unloadersRef = useRef(new Set<(idleOnly: boolean) => void>());
   const value = useMemo<AudioPlayerGroupContextValue>(
     () => ({
       requestPlayback: (audio) => {
@@ -41,24 +49,53 @@ export const AudioPlayerGroup: React.FC<React.PropsWithChildren> = ({
       releasePlayback: (audio) => {
         if (activeAudioRef.current === audio) activeAudioRef.current = null;
       },
+      registerUnload: (unload) => {
+        unloadersRef.current.add(unload);
+        return () => {
+          unloadersRef.current.delete(unload);
+        };
+      },
     }),
     [],
   );
 
   useEffect(() => {
-    const stopEverything = () => {
+    // Pausing is not enough. A media element that still holds a source keeps
+    // this webview registered as the system's now-playing target, so the
+    // keyboard's play key reaches a history entry in a window the user closed
+    // minutes ago. Dropping every source deregisters it: there is nothing left
+    // for the key to resume.
+    const unloadAll = () => {
       activeAudioRef.current?.pause();
       activeAudioRef.current = null;
+      for (const unload of unloadersRef.current) unload(false);
     };
-    // Leaving the tab, hiding the window, or quitting should all silence it —
-    // audio playing on from a view you have closed is just noise.
-    window.addEventListener("pagehide", stopEverything);
-    document.addEventListener("visibilitychange", () => {
-      if (document.hidden) stopEverything();
-    });
+    // Focus moving to another app is not a reason to cut off a clip the user
+    // started, but everything sitting there paused is exactly what the play key
+    // would wake up.
+    const unloadIdle = () => {
+      for (const unload of unloadersRef.current) unload(true);
+    };
+    const onVisibilityChange = () => {
+      if (document.hidden) unloadAll();
+    };
+    window.addEventListener("pagehide", unloadAll);
+    window.addEventListener("blur", unloadIdle);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    // Closing the settings window only hides it — the webview lives on, and it
+    // is not reliably marked hidden, so the page events above can all miss it.
+    // The window's own close is the signal that actually fires.
+    const closing = getCurrentWindow()
+      .onCloseRequested(() => unloadAll())
+      .catch(() => () => {});
+
     return () => {
-      stopEverything();
-      window.removeEventListener("pagehide", stopEverything);
+      unloadAll();
+      window.removeEventListener("pagehide", unloadAll);
+      window.removeEventListener("blur", unloadIdle);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      closing.then((unlisten) => unlisten());
     };
   }, []);
 
@@ -195,6 +232,25 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   useEffect(() => {
     if (knownDuration && knownDuration > 0) setDuration(knownDuration);
   }, [knownDuration]);
+
+  // Give the source back: the element goes empty, which is what stops the
+  // system's play key from finding something to resume here. The next play
+  // re-fetches it.
+  const unload = useCallback((idleOnly: boolean) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (idleOnly && !audio.paused) return;
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+    setIsPlaying(false);
+    setCurrentTime(0);
+    prevLoadedSrc.current = null;
+    // The blob URL, if there is one, is revoked by the cleanup below.
+    setLoadedSrc(null);
+  }, []);
+
+  useEffect(() => group?.registerUnload(unload), [group, unload]);
 
   // Auto-play when src becomes available (via onLoadRequest or autoPlay prop)
   useEffect(() => {
