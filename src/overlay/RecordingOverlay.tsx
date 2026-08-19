@@ -66,6 +66,10 @@ const RecordingOverlay: React.FC = () => {
   const { t } = useTranslation();
   const [isVisible, setIsVisible] = useState(false);
   const [state, setState] = useState<OverlayState>("recording");
+  // `Stream::play()` returning does not mean hardware callbacks are flowing.
+  // Stay visually in an arming state until the backend processes the first
+  // actual microphone sample chunk.
+  const [captureReady, setCaptureReady] = useState(false);
   const [streamText, setStreamText] = useState<StreamTextEvent>({
     committed: "",
     tentative: "",
@@ -97,6 +101,15 @@ const RecordingOverlay: React.FC = () => {
   useEffect(() => {
     const setupEventListeners = async () => {
       const unlistenShow = await listen("show-overlay", async (event) => {
+        const overlayState = event.payload as OverlayState;
+        // Reset synchronously before settings I/O. A fast microphone can emit
+        // recording-ready while the awaits below are in flight; resetting after
+        // them would overwrite that event and leave the overlay stuck arming.
+        if (overlayState === "recording" || overlayState === "streaming") {
+          setCaptureReady(false);
+          setStreamText({ committed: "", tentative: "" });
+        }
+
         await syncLanguageFromSettings();
         // The Live panel flows downward from a top overlay and upward from a
         // bottom one; read the placement so the layout can flip to match.
@@ -110,11 +123,7 @@ const RecordingOverlay: React.FC = () => {
         } catch {
           // Keep the previous/default placement if settings can't be read.
         }
-        const overlayState = event.payload as OverlayState;
         setState(overlayState);
-        if (overlayState === "recording" || overlayState === "streaming") {
-          setStreamText({ committed: "", tentative: "" });
-        }
         if (overlayState === "streaming") {
           setPhase("listening");
           setWorkKind("transcribing");
@@ -126,6 +135,12 @@ const RecordingOverlay: React.FC = () => {
 
       const unlistenHide = await listen("hide-overlay", () => {
         setIsVisible(false);
+        setCaptureReady(false);
+      });
+
+      const unlistenReady = await listen("recording-ready", () => {
+        setElapsed(0);
+        setCaptureReady(true);
       });
 
       const unlistenLevel = await listen<number[]>("mic-level", (event) => {
@@ -155,6 +170,7 @@ const RecordingOverlay: React.FC = () => {
       return () => {
         unlistenShow();
         unlistenHide();
+        unlistenReady();
         unlistenLevel();
         unlistenStream();
         unlistenPhase();
@@ -164,12 +180,12 @@ const RecordingOverlay: React.FC = () => {
     setupEventListeners();
   }, []);
 
-  // Elapsed timer while the Live overlay is visible.
+  // Elapsed capture timer starts only once microphone samples are flowing.
   useEffect(() => {
-    if (state !== "streaming" || !isVisible) return;
+    if (state !== "streaming" || !isVisible || !captureReady) return;
     const id = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => clearInterval(id);
-  }, [state, isVisible]);
+  }, [state, isVisible, captureReady]);
 
   // Drive the flow bar's --audio-scale on its own frame loop rather than from
   // React state: the bars are CSS transforms, so a per-frame variable write
@@ -245,9 +261,14 @@ const RecordingOverlay: React.FC = () => {
 
   // ---- Shared building blocks (one visual language for every overlay form) ----
   // Flow-bar waveform: ten bars whose scale comes entirely from CSS (the shared
-  // --audio-scale on this element, times each bar's own bulge factor).
+  // --audio-scale on this element, times each bar's own bulge factor). Until the
+  // first microphone callback lands the bars are muted, so the bar acknowledges
+  // the shortcut without pretending it is already hearing anything.
   const flowWave = (
-    <div ref={flowWaveRef} className="wwave">
+    <div
+      ref={flowWaveRef}
+      className={`wwave ${captureReady ? "" : "arming"}`}
+    >
       {FLOW_BAR_STYLE.map((barStyle, i) => (
         <i key={i} style={barStyle} />
       ))}
@@ -284,7 +305,7 @@ const RecordingOverlay: React.FC = () => {
   const listeningRow = (showTimer: boolean, showCancel: boolean) => (
     <div className="sbase">
       <div className="sbase-l">
-        <span className="sdot" />
+        <span className={`sdot ${captureReady ? "ready" : "arming"}`} />
       </div>
       {flowWave}
       <div className="sbase-r">
