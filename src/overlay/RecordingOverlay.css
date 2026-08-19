@@ -134,14 +134,17 @@
   align-items: flex-start; /* top placement: flush to the top edge */
 }
 
-/* Compact pill: fade the whole container in/out (the pill itself never pops or
-   morphs). */
+/* The pill is there or it isn't. Fading it in reads as the bar growing, because
+   the shape emerges out of the background over the length of the fade; the
+   reference has it at full opacity in its first frame. Leaving is still a fade,
+   which nothing is waiting on. */
 .ov-fade {
   opacity: 0;
-  transition: opacity 200ms ease-out;
+  transition: opacity 160ms ease-out;
 }
 .ov-fade.show {
   opacity: 1;
+  transition: none;
 }
 
 /* Top placement, Live panel: stack the control pill above the text region so the
@@ -430,18 +433,31 @@
   justify-content: center;
   align-items: center;
   flex-shrink: 0;
-  /* Resting: the nub the bar grows out of. */
-  width: 40px;
-  height: 8px;
+  /* Full height from the first frame it is on screen. Wispr's bar does not grow
+     into place — measured at 120fps, its pill is 30pt tall in the very first
+     frame and only the width settles (50 -> 73) over the next 100ms, because it
+     is coming from its ready size rather than from nothing. Animating the height
+     is what reads as sliding up. */
+  width: 73px;
+  height: 30px;
   background: var(--w-surface);
   border: 1px solid var(--w-hairline);
   border-radius: 22.5px;
   overflow: hidden;
-  transition: all 0.1s var(--w-ease);
+  transition: width 0.1s var(--w-ease);
 }
 .wpill.recording {
   width: 73px;
-  height: 30px;
+  animation: wpill-settle 100ms var(--w-ease);
+}
+/* The same 50 -> 73 the reference shows, so the bar lands rather than unfolds. */
+@keyframes wpill-settle {
+  from {
+    width: 50px;
+  }
+  to {
+    width: 73px;
+  }
 }
 .wpill.working {
   width: 98px;
@@ -451,6 +467,9 @@
 @media (prefers-reduced-motion: reduce) {
   .wpill {
     transition: none;
+  }
+  .wpill.recording {
+    animation: none;
   }
 }
 

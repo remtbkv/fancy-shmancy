@@ -218,19 +218,6 @@ const RecordingOverlay: React.FC = () => {
     return () => cancelAnimationFrame(raf);
   }, [isVisible]);
 
-  // The capsule enters at its resting size and is given the live state on the
-  // next frame, so the 100ms transition plays the grow instead of the bar just
-  // appearing at full size.
-  const [grown, setGrown] = useState(false);
-  useEffect(() => {
-    if (!isVisible) {
-      setGrown(false);
-      return;
-    }
-    const raf = requestAnimationFrame(() => setGrown(true));
-    return () => cancelAnimationFrame(raf);
-  }, [isVisible]);
-
   // Stick to the bottom as text streams in — but only while pinned, so a user who
   // has scrolled up to read history isn't yanked back down by the next chunk.
   useLayoutEffect(() => {
@@ -387,7 +374,7 @@ const RecordingOverlay: React.FC = () => {
       className={`ov-stage ${position} ov-fade ${isVisible ? "show" : ""}`}
     >
       <div
-        className={`wpill ${grown ? (working ? "working" : "recording") : ""}`}
+        className={`wpill ${working ? "working" : "recording"}`}
         onClick={() => commands.cancelOperation()}
       >
         <div className="wrow">
