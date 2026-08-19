@@ -278,6 +278,18 @@ struct MicrophoneResolution {
 
 /* ──────────────────────────────────────────────────────────────── */
 
+/// Speech is held for this long past the last frame the VAD passed, so the bar
+/// rides through the gaps between words instead of collapsing on every breath.
+const SPEECH_HOLD_MS: u64 = 250;
+
+/// Wall-clock milliseconds. Only ever used as a difference between two reads.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
 fn create_audio_recorder(
     vad_path: &Path,
     app_handle: &tauri::AppHandle,
@@ -289,6 +301,9 @@ fn create_audio_recorder(
     // A single Silero engine covers both the offline and streaming policies (never
     // active at once within a recording), so the recorder reconfigures its
     // hangover tail per session rather than keeping two ONNX sessions resident.
+    // Shared between the two callbacks below: when the VAD last passed a frame.
+    let last_speech_ms = Arc::new(AtomicU64::new(0));
+
     let silero = SileroVad::new(vad_path, VAD_THRESHOLD)
         .map_err(|e| anyhow::anyhow!("Failed to create SileroVad: {}", e))?;
     let smoothed_vad = SmoothedVad::new(
@@ -311,7 +326,15 @@ fn create_audio_recorder(
         .with_selected_channel(selected_channel)
         .with_level_callback({
             let app_handle = app_handle.clone();
-            move |levels| {
+            let last_speech = Arc::clone(&last_speech_ms);
+            move |mut levels| {
+                // Tell the overlay whether this window is speech, so its bar can
+                // answer a voice rather than a room. The audio callback below
+                // only ever sees frames the VAD passed, so the freshness of its
+                // last frame is the verdict — no second detector needed.
+                let speaking =
+                    now_ms().saturating_sub(last_speech.load(Ordering::Relaxed)) <= SPEECH_HOLD_MS;
+                levels.push(if speaking { 1.0 } else { 0.0 });
                 utils::emit_levels(&app_handle, &levels);
             }
         })
@@ -319,11 +342,15 @@ fn create_audio_recorder(
             let router = stream_router;
             let ahead = ahead_of_stop;
             let partial = partial;
+            let last_speech = last_speech_ms;
             move |frame| {
                 router.feed(frame);
                 ahead.feed(frame);
                 // Third consumer: the copy on disk that outlives the process.
                 partial.feed(frame);
+                // Fourth: a timestamp, because reaching here at all means the
+                // VAD called this frame speech.
+                last_speech.store(now_ms(), Ordering::Relaxed);
             }
         });
 

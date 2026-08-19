@@ -35,6 +35,7 @@ const FLOW_SLEW = 1.6; // max level change per second
 // the point. The floor lives outside the component so it survives across
 // recordings, as Wispr's does across a session.
 const FLOW_BUCKETS = 16; // levels[FLOW_BUCKETS] is the dBFS the recorder rides along
+const FLOW_SPEECH = 17; // levels[FLOW_SPEECH] is 1 while the VAD is passing frames
 const FLOW_FLOOR_MIN_DB = -60;
 const FLOW_RANGE_DB = 20;
 let flowFloorDb = 0;
@@ -166,10 +167,17 @@ const RecordingOverlay: React.FC = () => {
           setCaptureReady(true);
         }
         if (db < flowFloorDb) flowFloorDb = Math.max(FLOW_FLOOR_MIN_DB, db);
-        flowLevelRef.current = Math.min(
+        const level = Math.min(
           1,
           Math.max(0, (db - flowFloorDb) / FLOW_RANGE_DB),
         );
+        // A room is not a voice. The recorder marks windows the VAD passed, and
+        // the bar answers only those — in a café the level is still tracked (so
+        // the floor keeps calibrating) but the bars rest until someone speaks.
+        // Falling back to reacting when the flag is absent keeps this working
+        // against a build that doesn't send it.
+        const speech = payload[FLOW_SPEECH];
+        flowLevelRef.current = speech === undefined || speech > 0 ? level : 0;
       });
 
       const unlistenStream = await events.streamTextEvent.listen((event) => {
