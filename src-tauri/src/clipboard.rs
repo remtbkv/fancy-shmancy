@@ -698,6 +698,19 @@ fn paste_via_external_script(text: &str, script_path: &str) -> Result<(), String
     Ok(())
 }
 
+/// Past this many characters, synthetic text input stops being the right tool:
+/// what it costs is not the sending but the receiving, and a rich-text editor
+/// absorbing one insertion this size can lock up for seconds.
+const CLIPBOARD_FALLBACK_CHARS: usize = 1500;
+
+/// Whether a Direct paste should go through the clipboard after all. Apps the
+/// user explicitly listed keep being typed into however long the text is —
+/// that list exists because their input turns a paste into an attachment, and
+/// length is exactly when that matters.
+fn force_clipboard_for_length(text: &str, style: TypingStyle) -> bool {
+    style == TypingStyle::AllAtOnce && text.chars().count() > CLIPBOARD_FALLBACK_CHARS
+}
+
 /// Types text directly by simulating individual key presses.
 fn paste_direct(
     text: &str,
@@ -858,7 +871,7 @@ pub fn paste_with_submit(
         PasteMethod::None => {
             info!("PasteMethod::None selected - skipping paste action");
         }
-        PasteMethod::Direct => {
+        PasteMethod::Direct if !force_clipboard_for_length(&text, style) => {
             paste_direct(
                 &text,
                 style,
@@ -867,6 +880,19 @@ pub fn paste_with_submit(
                 settings.typing_tool,
             )?;
         }
+        // A long transcript into an app that did not ask to be typed into goes
+        // through the clipboard instead. Handing the text to the input system
+        // takes milliseconds either way, but the receiving app has to absorb it
+        // as an insertion — Notes relaid out a 17,795-character one for long
+        // enough to stall the machine, where a pasteboard read is one event it
+        // handles in its own time.
+        PasteMethod::Direct => paste_via_clipboard(
+            &text,
+            &app_handle,
+            &PasteMethod::CtrlV,
+            paste_delay_ms,
+            paste_delay_after_ms,
+        )?,
         PasteMethod::CtrlV | PasteMethod::CtrlShiftV | PasteMethod::ShiftInsert => {
             // Debug-gated receipt-sequenced paste (#502): restore the clipboard
             // after the target actually reads the transcript, not on a timer.
@@ -1156,5 +1182,33 @@ e.g. 28:1 28:0 means pressing on the Enter button on a standard US keyboard.
 
         assert_eq!(result.unwrap_err(), "input failed");
         assert!(restored.get());
+    }
+}
+
+#[cfg(test)]
+mod paste_length_tests {
+    use super::*;
+
+    /// The rule that keeps a long dictation from stalling the app it lands in,
+    /// without taking the typed-out behaviour away from the apps that asked for
+    /// it — those are precisely the ones where a long paste becomes an
+    /// attachment instead of text.
+    #[test]
+    fn long_text_falls_back_to_the_clipboard_only_when_not_typed_out() {
+        let long = "x".repeat(CLIPBOARD_FALLBACK_CHARS + 1);
+        let short = "x".repeat(CLIPBOARD_FALLBACK_CHARS);
+
+        assert!(force_clipboard_for_length(&long, TypingStyle::AllAtOnce));
+        assert!(!force_clipboard_for_length(&short, TypingStyle::AllAtOnce));
+        assert!(!force_clipboard_for_length(&long, TypingStyle::TypedOut));
+    }
+
+    /// Character count, not byte length: a transcript full of multi-byte
+    /// characters must not trip the fallback early.
+    #[test]
+    fn the_threshold_counts_characters_not_bytes() {
+        let text = "é".repeat(CLIPBOARD_FALLBACK_CHARS);
+        assert!(text.len() > CLIPBOARD_FALLBACK_CHARS);
+        assert!(!force_clipboard_for_length(&text, TypingStyle::AllAtOnce));
     }
 }
