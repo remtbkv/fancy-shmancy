@@ -31,6 +31,9 @@ static MIGRATIONS: &[M] = &[
     M::up("ALTER TABLE transcription_history ADD COLUMN post_processed_text TEXT;"),
     M::up("ALTER TABLE transcription_history ADD COLUMN post_process_prompt TEXT;"),
     M::up("ALTER TABLE transcription_history ADD COLUMN post_process_requested BOOLEAN NOT NULL DEFAULT 0;"),
+    // A cancelled recording is kept too: escaping out of one is nearly always a
+    // slip, and the audio is the only copy of what was said.
+    M::up("ALTER TABLE transcription_history ADD COLUMN cancelled BOOLEAN NOT NULL DEFAULT 0;"),
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
@@ -63,6 +66,9 @@ pub struct HistoryEntry {
     pub post_processed_text: Option<String>,
     pub post_process_prompt: Option<String>,
     pub post_process_requested: bool,
+    /// True when the recording was escaped out of rather than transcribed. The
+    /// audio is there; `transcription_text` is empty.
+    pub cancelled: bool,
 }
 
 pub struct HistoryManager {
@@ -207,6 +213,7 @@ impl HistoryManager {
             post_processed_text: row.get("post_processed_text")?,
             post_process_prompt: row.get("post_process_prompt")?,
             post_process_requested: row.get("post_process_requested")?,
+            cancelled: row.get("cancelled").unwrap_or(false),
         })
     }
 
@@ -261,6 +268,7 @@ impl HistoryManager {
             post_processed_text,
             post_process_prompt,
             post_process_requested,
+            cancelled: false,
         };
 
         debug!("Saved history entry with id {}", entry.id);
@@ -268,6 +276,56 @@ impl HistoryManager {
         self.cleanup_old_entries()?;
 
         // Emit typed event for real-time frontend updates
+        if let Err(e) = (HistoryUpdatePayload::Added {
+            entry: entry.clone(),
+        })
+        .emit(&self.app_handle)
+        {
+            error!("Failed to emit history-updated event: {}", e);
+        }
+
+        Ok(entry)
+    }
+
+    /// Keep a recording that was escaped out of. Escaping is nearly always a
+    /// slip, and until now it threw away the only copy of what was said; the
+    /// entry carries the audio with no transcript, flagged so the UI can say so.
+    /// Retry from history is what turns it into text.
+    pub fn save_cancelled_entry(&self, file_name: String) -> Result<HistoryEntry> {
+        let timestamp = Utc::now().timestamp();
+        let title = self.format_timestamp_title(timestamp);
+
+        let conn = self.get_connection()?;
+        conn.execute(
+            "INSERT INTO transcription_history (
+                file_name,
+                timestamp,
+                saved,
+                title,
+                transcription_text,
+                post_process_requested,
+                cancelled
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![&file_name, timestamp, false, &title, "", false, true],
+        )?;
+
+        let entry = HistoryEntry {
+            id: conn.last_insert_rowid(),
+            file_name,
+            timestamp,
+            saved: false,
+            title,
+            transcription_text: String::new(),
+            post_processed_text: None,
+            post_process_prompt: None,
+            post_process_requested: false,
+            cancelled: true,
+        };
+
+        info!("Kept cancelled recording as history entry {}", entry.id);
+
+        self.cleanup_old_entries()?;
+
         if let Err(e) = (HistoryUpdatePayload::Added {
             entry: entry.clone(),
         })
@@ -308,7 +366,7 @@ impl HistoryManager {
 
         let entry = conn
             .query_row(
-                "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested
+                "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, cancelled
                  FROM transcription_history WHERE id = ?1",
                 params![id],
                 Self::map_history_entry,
@@ -459,7 +517,7 @@ impl HistoryManager {
             (Some(cursor_id), Some(lim)) => {
                 let fetch_count = (lim + 1) as i64;
                 let mut stmt = conn.prepare(
-                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested
+                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, cancelled
                      FROM transcription_history
                      WHERE id < ?1
                      ORDER BY id DESC
@@ -473,7 +531,7 @@ impl HistoryManager {
             (None, Some(lim)) => {
                 let fetch_count = (lim + 1) as i64;
                 let mut stmt = conn.prepare(
-                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested
+                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, cancelled
                      FROM transcription_history
                      ORDER BY id DESC
                      LIMIT ?1",
@@ -485,7 +543,7 @@ impl HistoryManager {
             }
             (_, None) => {
                 let mut stmt = conn.prepare(
-                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested
+                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, cancelled
                      FROM transcription_history
                      ORDER BY id DESC",
                 )?;
@@ -516,7 +574,8 @@ impl HistoryManager {
                 transcription_text,
                 post_processed_text,
                 post_process_prompt,
-                post_process_requested
+                post_process_requested,
+                cancelled
              FROM transcription_history
              ORDER BY timestamp DESC
              LIMIT 1",
@@ -543,7 +602,8 @@ impl HistoryManager {
                 transcription_text,
                 post_processed_text,
                 post_process_prompt,
-                post_process_requested
+                post_process_requested,
+                cancelled
              FROM transcription_history
              WHERE transcription_text != ''
              ORDER BY timestamp DESC
@@ -597,7 +657,8 @@ impl HistoryManager {
                 transcription_text,
                 post_processed_text,
                 post_process_prompt,
-                post_process_requested
+                post_process_requested,
+                cancelled
              FROM transcription_history
              WHERE id = ?1",
         )?;
@@ -666,11 +727,47 @@ mod tests {
                 transcription_text TEXT NOT NULL,
                 post_processed_text TEXT,
                 post_process_prompt TEXT,
-                post_process_requested BOOLEAN NOT NULL DEFAULT 0
+                post_process_requested BOOLEAN NOT NULL DEFAULT 0,
+                cancelled BOOLEAN NOT NULL DEFAULT 0
             );",
         )
         .expect("create transcription_history table");
         conn
+    }
+
+    /// A cancelled take is kept for its audio, so it must survive the round trip
+    /// with an empty transcript and the flag set — that pair is what the UI reads
+    /// to say "cancelled" rather than "transcription failed".
+    #[test]
+    fn cancelled_entries_round_trip_with_no_transcript() {
+        let conn = setup_conn();
+        conn.execute(
+            "INSERT INTO transcription_history (
+                file_name, timestamp, saved, title, transcription_text,
+                post_process_requested, cancelled
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params!["handy-9.wav", 9_i64, false, "Recording 9", "", false, true],
+        )
+        .expect("insert cancelled entry");
+
+        let entry = HistoryManager::get_latest_entry_with_conn(&conn)
+            .expect("fetch latest entry")
+            .expect("an entry");
+        assert!(entry.cancelled);
+        assert_eq!(entry.transcription_text, "");
+    }
+
+    /// Rows written before the column existed read as not cancelled rather than
+    /// failing the query outright.
+    #[test]
+    fn entries_predating_the_column_read_as_not_cancelled() {
+        let conn = setup_conn();
+        insert_entry(&conn, 1, "hello", None);
+
+        let entry = HistoryManager::get_latest_entry_with_conn(&conn)
+            .expect("fetch latest entry")
+            .expect("an entry");
+        assert!(!entry.cancelled);
     }
 
     fn insert_entry(conn: &Connection, timestamp: i64, text: &str, post_processed: Option<&str>) {

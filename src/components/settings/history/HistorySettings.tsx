@@ -482,7 +482,9 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
           ? t("settings.history.transcribing")
           : hasTranscription
             ? entry.transcription_text
-            : t("settings.history.transcriptionFailed")}
+            : entry.cancelled
+              ? t("settings.history.cancelled")
+              : t("settings.history.transcriptionFailed")}
       </p>
 
       {/* A long dictation would otherwise push every other entry off the page. */}

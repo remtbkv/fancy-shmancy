@@ -3,7 +3,7 @@ use crate::managers::transcription::TranscriptionManager;
 use crate::media_control;
 use crate::shortcut;
 use crate::TranscriptionCoordinator;
-use log::info;
+use log::{debug, error, info};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
@@ -86,10 +86,11 @@ pub fn cancel_current_operation_from(app: &AppHandle, source: &str) {
     // Unregister the cancel shortcut asynchronously
     shortcut::unregister_cancel_shortcut(app);
 
-    // Cancel any ongoing recording
+    // Cancel any ongoing recording, but keep what it captured.
     let audio_manager = app.state::<Arc<AudioRecordingManager>>();
     let recording_was_active = audio_manager.is_recording();
-    audio_manager.cancel_recording();
+    let cancelled_samples = audio_manager.cancel_recording_returning_samples();
+    keep_cancelled_recording(app, cancelled_samples);
 
     // Abandon any live streaming transcription
     let tm = app.state::<Arc<TranscriptionManager>>();
@@ -115,6 +116,42 @@ pub fn cancel_current_operation_from(app: &AppHandle, source: &str) {
     }
 
     info!("Operation cancellation completed - returned to idle state");
+}
+
+/// Anything shorter than this is a stray tap, not something that was said, and
+/// filling history with those would bury the takes worth recovering.
+const CANCELLED_KEEP_MIN_SAMPLES: usize = 12_000; // 0.75s at 16 kHz
+
+/// Write a cancelled recording to the recordings directory and file it in
+/// history with no transcript. Escaping out of a recording is nearly always a
+/// slip, and this is the only copy of what was said — retry from history turns
+/// it into text.
+fn keep_cancelled_recording(app: &AppHandle, samples: Option<Vec<f32>>) {
+    let Some(samples) = samples else { return };
+    if samples.len() < CANCELLED_KEEP_MIN_SAMPLES {
+        debug!(
+            "Cancelled recording was only {} samples; not keeping it",
+            samples.len()
+        );
+        return;
+    }
+
+    let Some(history) = app.try_state::<Arc<crate::managers::history::HistoryManager>>() else {
+        return;
+    };
+    let history = Arc::clone(&history);
+    let file_name = format!("handy-{}.wav", chrono::Utc::now().timestamp());
+    let wav_path = history.recordings_dir().join(&file_name);
+
+    std::thread::spawn(move || {
+        if let Err(e) = crate::audio_toolkit::save_wav_file(&wav_path, &samples) {
+            error!("Failed to write the cancelled recording: {e}");
+            return;
+        }
+        if let Err(e) = history.save_cancelled_entry(file_name) {
+            error!("Failed to file the cancelled recording in history: {e}");
+        }
+    });
 }
 
 /// Check if using the Wayland display server protocol

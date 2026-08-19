@@ -1000,6 +1000,14 @@ impl AudioRecordingManager {
 
     /// Cancel any ongoing recording without returning audio samples
     pub fn cancel_recording(&self) {
+        let _ = self.cancel_recording_returning_samples();
+    }
+
+    /// Same, but hands back whatever the microphone had captured. A cancel is
+    /// usually a mistake — the audio is the only copy of what was said, so the
+    /// caller gets the chance to keep it before it is dropped.
+    pub fn cancel_recording_returning_samples(&self) -> Option<Vec<f32>> {
+        let mut captured = None;
         self.invalidate_recording_readiness();
         self.cancel_generation.fetch_add(1, Ordering::AcqRel);
         let mut state = self.state.lock().unwrap();
@@ -1010,7 +1018,7 @@ impl AudioRecordingManager {
                 drop(state);
 
                 if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
-                    let _ = rec.stop(); // Discard the result
+                    captured = rec.stop().ok();
                 }
 
                 *self.is_recording.lock().unwrap() = false;
@@ -1029,5 +1037,7 @@ impl AudioRecordingManager {
             }
             RecordingState::Idle => {}
         }
+
+        captured
     }
 }

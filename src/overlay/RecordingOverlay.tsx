@@ -265,10 +265,7 @@ const RecordingOverlay: React.FC = () => {
   // first microphone callback lands the bars are muted, so the bar acknowledges
   // the shortcut without pretending it is already hearing anything.
   const flowWave = (
-    <div
-      ref={flowWaveRef}
-      className={`wwave ${captureReady ? "" : "arming"}`}
-    >
+    <div ref={flowWaveRef} className={`wwave ${captureReady ? "" : "arming"}`}>
       {FLOW_BAR_STYLE.map((barStyle, i) => (
         <i key={i} style={barStyle} />
       ))}
