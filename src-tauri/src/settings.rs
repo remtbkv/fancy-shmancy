@@ -627,7 +627,12 @@ fn default_show_whats_new_on_update() -> bool {
 }
 
 fn default_whats_new_last_seen_version() -> String {
-    env!("CARGO_PKG_VERSION").to_string()
+    // Upstream defaults this to the current version, on the reasoning that a
+    // changelog means nothing to someone who has never used the app. This fork
+    // puts the "what this thing does" briefer in the same slot, which is exactly
+    // what a first-time user should see — so a fresh install starts with nothing
+    // seen.
+    String::new()
 }
 
 fn default_selected_language() -> String {
