@@ -33,13 +33,21 @@ const FLOW_SLEW = 1.6; // max level RISE per second — Wispr's constant
 // verdict said stop. This is a deliberate divergence, and the reason the bar
 // settles when the speaking does.
 const FLOW_SLEW_FALL = 6.0;
-// Loudness → level, lifted from Wispr Flow's main process verbatim: keep a floor
-// that only ever descends to the quietest dB this run has seen (never below
-// -60 dBFS), and read the level as how far above that floor the current window
-// sits, over a 20 dB span. Nothing here is tuned to a particular mic — a loud
-// setup and a quiet one both end up using the same top of the range, which is
-// the point. The floor lives outside the component so it survives across
-// recordings, as Wispr's does across a session.
+// Loudness → level. Wispr's scaler keeps a floor that only ever descends to the
+// quietest dB it has seen, clamped at -60, and reads the level as how far above
+// that floor the current window sits over a 20 dB span.
+//
+// That assumes a quiet room, and Rem's often are not. Measured off his own
+// recordings: ambient sits at -34 to -38 dBFS, so once the floor has descended
+// to -60 the ambient alone maps to 1.0 — the top of the range — and the bar is
+// pinned full-height by an empty room. It only looked fine on short recordings
+// because the floor had not had time to get down there yet, which is exactly
+// why the lag grew with duration.
+//
+// So the floor learns the room instead of hunting the all-time minimum: it drops
+// straight to anything quieter, and creeps back up toward the level while the
+// detector says nobody is speaking. It ends up sitting on the room tone, which
+// is what the bottom of the range should mean.
 const FLOW_BUCKETS = 16; // levels[FLOW_BUCKETS] is the dBFS the recorder rides along
 const FLOW_SPEECH = 17; // levels[FLOW_SPEECH] is 1 while the VAD is passing frames
 // How many level packets in a row have to disagree before the bar is pulled
@@ -48,9 +56,14 @@ const FLOW_SPEECH = 17; // levels[FLOW_SPEECH] is 1 while the VAD is passing fra
 // bar settling rather than as a lag. Nothing gates the rise: sound moves the
 // bar on the very first packet, and only staying un-voiced takes it away.
 const FLOW_SUPPRESS_AFTER_PACKETS = 2;
-const FLOW_FLOOR_MIN_DB = -60;
+const FLOW_FLOOR_MIN_DB = -70;
+const FLOW_FLOOR_MAX_DB = -25;
 const FLOW_RANGE_DB = 20;
-let flowFloorDb = 0;
+// Per packet, while un-voiced: how much of the gap to the current level the
+// floor closes. At ~30 packets a second this settles on a room in a second or
+// two, then holds.
+const FLOW_FLOOR_LEARN = 0.05;
+let flowFloorDb = FLOW_FLOOR_MAX_DB;
 
 const FLOW_BAR_STYLE: React.CSSProperties[] = Array.from(
   { length: FLOW_BARS },
@@ -107,8 +120,10 @@ const RecordingOverlay: React.FC = () => {
   // Mirrors captureReady so the level listener can clear the arming state
   // without a set-state call on every packet.
   const captureReadyRef = useRef(false);
-  // Consecutive packets the VAD has not called speech.
+  // Consecutive packets the VAD has not called speech, and whether the last one
+  // tipped into suppression.
   const unvoicedRunRef = useRef(0);
+  const flowSuppressedRef = useRef(false);
   // Live-text scroll-back: the text region "sticks" to the newest line while the
   // user is at the bottom; if they scroll up to read history, auto-follow pauses
   // until they scroll back down.
@@ -126,6 +141,8 @@ const RecordingOverlay: React.FC = () => {
         if (overlayState === "recording" || overlayState === "streaming") {
           captureReadyRef.current = false;
           unvoicedRunRef.current = 0;
+          flowSuppressedRef.current = false;
+          flowFloorDb = FLOW_FLOOR_MAX_DB;
           setCaptureReady(false);
           setStreamText({ committed: "", tentative: "" });
         }
@@ -181,7 +198,18 @@ const RecordingOverlay: React.FC = () => {
           captureReadyRef.current = true;
           setCaptureReady(true);
         }
-        if (db < flowFloorDb) flowFloorDb = Math.max(FLOW_FLOOR_MIN_DB, db);
+        const speech = payload[FLOW_SPEECH];
+        const voiced = speech === undefined || speech > 0;
+        if (db < flowFloorDb) {
+          // Anything quieter than the floor IS the floor.
+          flowFloorDb = Math.max(FLOW_FLOOR_MIN_DB, db);
+        } else if (!voiced) {
+          // Nobody is talking, so this is the room: let the floor rise to it.
+          flowFloorDb = Math.min(
+            FLOW_FLOOR_MAX_DB,
+            flowFloorDb + (db - flowFloorDb) * FLOW_FLOOR_LEARN,
+          );
+        }
         const level = Math.min(
           1,
           Math.max(0, (db - flowFloorDb) / FLOW_RANGE_DB),
@@ -189,16 +217,16 @@ const RecordingOverlay: React.FC = () => {
         // A room is not a voice. The recorder marks the windows its VAD passed;
         // sustained disagreement pulls the bar down, but the first packets of
         // any sound always get through, so the bar never lags a real voice.
-        // Falling back to reacting when the flag is absent keeps this working
-        // against a build that doesn't send it.
-        const speech = payload[FLOW_SPEECH];
-        if (speech === undefined || speech > 0) {
+        if (voiced) {
           unvoicedRunRef.current = 0;
         } else {
           unvoicedRunRef.current += 1;
         }
         const suppressed = unvoicedRunRef.current > FLOW_SUPPRESS_AFTER_PACKETS;
         flowLevelRef.current = suppressed ? 0 : level;
+        // Suppression is a decision, not a fade: don't let the slew spend
+        // another 170ms walking a saturated level down to nothing.
+        if (suppressed) flowSuppressedRef.current = true;
       });
 
       const unlistenStream = await events.streamTextEvent.listen((event) => {
@@ -250,10 +278,16 @@ const RecordingOverlay: React.FC = () => {
       last = now;
       const blend = Math.pow(FLOW_BLEND, dt / FLOW_FRAME_MS);
       const blended = smoothed * blend + flowLevelRef.current * (1 - blend);
-      const rising = blended > smoothed;
-      const limit = (dt / 1000) * (rising ? FLOW_SLEW : FLOW_SLEW_FALL);
-      const step = Math.min(limit, Math.max(-limit, blended - smoothed));
-      smoothed = Math.floor((smoothed + step) * 100) / 100;
+      if (flowSuppressedRef.current) {
+        // The verdict said stop; the bar stops.
+        flowSuppressedRef.current = false;
+        smoothed = 0;
+      } else {
+        const rising = blended > smoothed;
+        const limit = (dt / 1000) * (rising ? FLOW_SLEW : FLOW_SLEW_FALL);
+        const step = Math.min(limit, Math.max(-limit, blended - smoothed));
+        smoothed = Math.floor((smoothed + step) * 100) / 100;
+      }
       el.style.setProperty(
         "--audio-scale",
         String(Math.max(1, FLOW_GAIN * smoothed)),
