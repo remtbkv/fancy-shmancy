@@ -72,7 +72,10 @@ const FLOW_FLOOR_MAX_DB = -25;
 // recordings (median 0.99, 5th percentile 0.83). Closing more slowly is what
 // held the first attempt at this to 41% — a span inherited from a loud moment
 // took half a minute to come back down.
-const FLOW_SPAN_INIT_DB = 10; // where a recording starts, near the corpus median
+// Where a recording starts. Overwritten from settings by the tuner, which
+// derives it from the recordings on this machine — a span that suits one voice
+// and one room suits nobody else's.
+let flowSpanInitDb = 10;
 const FLOW_SPAN_MIN_DB = 8; // 90% of recordings have more contrast than this
 const FLOW_SPAN_MAX_DB = 24; // and 100% have less than this
 const FLOW_SPAN_OPEN = 0.3; // fraction of the gap to a louder peak, per packet
@@ -82,7 +85,7 @@ const FLOW_SPAN_CLOSE_DB = 0.1; // dB conceded per packet, ~3 dB a second
 // two, then holds.
 const FLOW_FLOOR_LEARN = 0.05;
 let flowFloorDb = FLOW_FLOOR_MAX_DB;
-let flowSpanDb = FLOW_SPAN_INIT_DB;
+let flowSpanDb = flowSpanInitDb;
 
 const FLOW_BAR_STYLE: React.CSSProperties[] = Array.from(
   { length: FLOW_BARS },
@@ -161,8 +164,12 @@ const RecordingOverlay: React.FC = () => {
           captureReadyRef.current = false;
           unvoicedRunRef.current = 0;
           flowSuppressedRef.current = false;
-          flowFloorDb = FLOW_FLOOR_MAX_DB;
-          flowSpanDb = FLOW_SPAN_INIT_DB;
+          // The floor and span deliberately survive between recordings. A room
+          // does not change because a recording ended, so starting the next one
+          // from what the last one learned is the same thing as knowing the
+          // ambient up front — without holding the microphone open between
+          // takes to go and measure it. Both still converge within about a
+          // second if the room really has changed.
           setCaptureReady(false);
           setStreamText({ committed: "", tentative: "" });
         }
@@ -176,6 +183,11 @@ const RecordingOverlay: React.FC = () => {
             setPosition(
               settings.data.overlay_position === "top" ? "top" : "bottom",
             );
+            const tuned = settings.data.flow_span_init_db;
+            if (typeof tuned === "number" && tuned > 0) {
+              flowSpanInitDb = tuned;
+              flowSpanDb = tuned;
+            }
           }
         } catch {
           // Keep the previous/default placement if settings can't be read.

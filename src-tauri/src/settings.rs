@@ -462,6 +462,12 @@ pub struct AppSettings {
     pub recording_retention_period: RecordingRetentionPeriod,
     #[serde(default = "default_recording_storage_limit_gb")]
     pub recording_storage_limit_gb: f64,
+    /// Starting span for the flow bar, in dB, derived from this machine's own
+    /// recordings. The live span learns within a second or two; this is only
+    /// where it begins, and a value that suits one voice and room suits nobody
+    /// else's.
+    #[serde(default = "default_flow_span_init_db")]
+    pub flow_span_init_db: f64,
     #[serde(default)]
     pub paste_method: PasteMethod,
     #[serde(default)]
@@ -694,6 +700,12 @@ fn default_recording_retention_period() -> RecordingRetentionPeriod {
 /// less than anyone would notice on a modern disk.
 fn default_recording_storage_limit_gb() -> f64 {
     5.0
+}
+
+/// Until there are enough recordings to measure, the value the sweep over Rem's
+/// corpus picked. Anyone else's is derived from their own audio.
+fn default_flow_span_init_db() -> f64 {
+    10.0
 }
 
 fn default_audio_feedback_volume() -> f32 {
@@ -1084,6 +1096,7 @@ pub fn get_default_settings() -> AppSettings {
         history_limit: default_history_limit(),
         recording_retention_period: default_recording_retention_period(),
         recording_storage_limit_gb: default_recording_storage_limit_gb(),
+        flow_span_init_db: default_flow_span_init_db(),
         paste_method: PasteMethod::default(),
         clipboard_handling: ClipboardHandling::default(),
         auto_submit: default_auto_submit(),

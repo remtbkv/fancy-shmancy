@@ -174,6 +174,30 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     let history_manager =
         Arc::new(HistoryManager::new(app_handle).expect("Failed to initialize history manager"));
 
+    // Learn the flow bar's starting span from this machine's own recordings, off
+    // the main thread: reading what is new costs about 2ms a recording, and the
+    // shipped default stands until there is enough audio to beat it.
+    {
+        let app = app_handle.clone();
+        let dir = history_manager.recordings_dir().to_path_buf();
+        std::thread::spawn(move || {
+            if !managers::flow_tuning::is_due(&dir) {
+                return;
+            }
+            match managers::flow_tuning::retune(&dir) {
+                Ok(Some(span)) => {
+                    let mut settings = crate::settings::get_settings(&app);
+                    if (settings.flow_span_init_db - span).abs() >= 1.0 {
+                        settings.flow_span_init_db = span;
+                        crate::settings::write_settings(&app, settings);
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => log::warn!("flow tuning failed: {e}"),
+            }
+        });
+    }
+
     // A recording that was in flight when the app last died left a playable
     // safety copy behind. Adopt it before anything else can start writing to
     // the same directory, so the audio shows up in history to be transcribed
