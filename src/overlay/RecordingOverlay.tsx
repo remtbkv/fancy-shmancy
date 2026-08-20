@@ -58,12 +58,26 @@ const FLOW_SPEECH = 17; // levels[FLOW_SPEECH] is 1 while the VAD is passing fra
 const FLOW_SUPPRESS_AFTER_PACKETS = 2;
 const FLOW_FLOOR_MIN_DB = -70;
 const FLOW_FLOOR_MAX_DB = -25;
-const FLOW_RANGE_DB = 20;
+// Wispr reads the level over a fixed 20 dB above the floor, which assumes 20 dB
+// between a room and a voice. Measured on Rem's own recordings there is often
+// half that: two takes in the same room came in at 9.9 and 10.9 dB between his
+// quiet frames and his loud ones, so his loudest speech reached level 0.50-0.54
+// and the bar used half its height. A third, in a quieter room, had 19.5 dB and
+// looked right — which is the tell that the constant, not the voice, was the
+// problem.
+//
+// So the top of the range is learned the way the bottom is: a ceiling that
+// jumps to any new peak while the detector hears speech and gives the ground
+// back slowly. Whatever the contrast in the room, talking fills the bar.
+const FLOW_SPAN_MIN_DB = 8; // never divide by a span narrower than this
+const FLOW_CEIL_RISE = 0.3; // fraction of the gap to a new peak, per packet
+const FLOW_CEIL_DECAY_DB = 0.02; // dB conceded per packet, ~0.6 dB a second
 // Per packet, while un-voiced: how much of the gap to the current level the
 // floor closes. At ~30 packets a second this settles on a room in a second or
 // two, then holds.
 const FLOW_FLOOR_LEARN = 0.05;
 let flowFloorDb = FLOW_FLOOR_MAX_DB;
+let flowCeilDb = FLOW_FLOOR_MAX_DB + FLOW_SPAN_MIN_DB;
 
 const FLOW_BAR_STYLE: React.CSSProperties[] = Array.from(
   { length: FLOW_BARS },
@@ -143,6 +157,7 @@ const RecordingOverlay: React.FC = () => {
           unvoicedRunRef.current = 0;
           flowSuppressedRef.current = false;
           flowFloorDb = FLOW_FLOOR_MAX_DB;
+          flowCeilDb = FLOW_FLOOR_MAX_DB + FLOW_SPAN_MIN_DB;
           setCaptureReady(false);
           setStreamText({ committed: "", tentative: "" });
         }
@@ -210,10 +225,17 @@ const RecordingOverlay: React.FC = () => {
             flowFloorDb + (db - flowFloorDb) * FLOW_FLOOR_LEARN,
           );
         }
-        const level = Math.min(
-          1,
-          Math.max(0, (db - flowFloorDb) / FLOW_RANGE_DB),
-        );
+        if (voiced) {
+          // Only a voice sets the top of the range; a door slam must not
+          // rescale the bar for the rest of the recording.
+          if (db > flowCeilDb) {
+            flowCeilDb += (db - flowCeilDb) * FLOW_CEIL_RISE;
+          } else {
+            flowCeilDb -= FLOW_CEIL_DECAY_DB;
+          }
+        }
+        const span = Math.max(FLOW_SPAN_MIN_DB, flowCeilDb - flowFloorDb);
+        const level = Math.min(1, Math.max(0, (db - flowFloorDb) / span));
         // A room is not a voice. The recorder marks the windows its VAD passed;
         // sustained disagreement pulls the bar down, but the first packets of
         // any sound always get through, so the bar never lags a real voice.
