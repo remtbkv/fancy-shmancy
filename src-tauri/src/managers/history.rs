@@ -394,30 +394,19 @@ impl HistoryManager {
         Ok(entry)
     }
 
+    /// Retention is a size, not an age. A month-old dictation is no less useful
+    /// than yesterday's, and what actually runs out is disk — so nothing is
+    /// deleted for being old, only for being the oldest thing still over the
+    /// cap. The period and count settings upstream keeps are left alone but no
+    /// longer decide anything here; having both was the contradiction (auto
+    /// delete "never", and also a storage limit).
     pub fn cleanup_old_entries(&self) -> Result<()> {
-        let retention_period = crate::settings::get_recording_retention_period(&self.app_handle);
-
-        match retention_period {
-            crate::settings::RecordingRetentionPeriod::Never => {
-                // Don't delete anything
-                Ok(())
-            }
-            crate::settings::RecordingRetentionPeriod::PreserveLimit => {
-                // Use the old count-based logic with history_limit
-                let limit = crate::settings::get_history_limit(&self.app_handle);
-                self.cleanup_by_count(limit)
-            }
-            crate::settings::RecordingRetentionPeriod::StorageLimit => {
-                let gb = crate::settings::get_recording_storage_limit_gb(&self.app_handle);
-                self.cleanup_by_size(gb)
-            }
-            _ => {
-                // Use time-based logic
-                self.cleanup_by_time(retention_period)
-            }
-        }
+        let gb = crate::settings::get_recording_storage_limit_gb(&self.app_handle);
+        self.cleanup_by_size(gb)
     }
 
+    // Kept for upstream parity; retention is size-based in this fork.
+    #[allow(dead_code)]
     fn delete_entries_and_files(&self, entries: &[(i64, String)]) -> Result<usize> {
         if entries.is_empty() {
             return Ok(0);
@@ -448,6 +437,8 @@ impl HistoryManager {
         Ok(deleted_count)
     }
 
+    // Kept for upstream parity; retention is size-based in this fork.
+    #[allow(dead_code)]
     fn cleanup_by_count(&self, limit: usize) -> Result<()> {
         let conn = self.get_connection()?;
 
@@ -477,6 +468,8 @@ impl HistoryManager {
         Ok(())
     }
 
+    // Kept for upstream parity; retention is size-based in this fork.
+    #[allow(dead_code)]
     fn cleanup_by_time(
         &self,
         retention_period: crate::settings::RecordingRetentionPeriod,

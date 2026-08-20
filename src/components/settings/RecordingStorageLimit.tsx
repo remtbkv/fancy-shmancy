@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Input } from "../ui/Input";
 import { SettingContainer } from "../ui/SettingContainer";
 import { useSettings } from "../../hooks/useSettings";
 import { commands } from "@/bindings";
@@ -12,10 +13,14 @@ const formatBytes = (bytes: number): string =>
     : `${Math.round(bytes / 1_000_000)} MB`;
 
 /**
- * How much disk the kept recordings use, what an hour of talking adds, and the
- * cap. The per-hour figure is measured from the audio actually kept rather than
- * derived from the sample format, so it already accounts for the silence the
- * VAD strips — a number you can plan against instead of a theoretical bitrate.
+ * The only retention control: how much disk the recordings may use. Age is the
+ * wrong axis for dictation — a month-old take is no less useful than
+ * yesterday's — so nothing is deleted for being old, only for being the oldest
+ * thing still over budget.
+ *
+ * The figures to the left are measured from the audio actually kept rather than
+ * derived from the sample format, so they already account for the silence the
+ * VAD strips. A cap means nothing without them.
  */
 export const RecordingStorageLimit: React.FC<{
   descriptionMode?: "inline" | "tooltip";
@@ -44,45 +49,54 @@ export const RecordingStorageLimit: React.FC<{
 
   useEffect(refresh, [refresh]);
 
-  const onChange = async (next: number) => {
+  const handleChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const next = parseFloat(event.target.value);
+    if (!Number.isFinite(next) || next <= 0) return;
     await updateSetting("recording_storage_limit_gb", next);
     await commands.updateRecordingStorageLimit(next);
     refresh();
   };
 
-  // What the cap buys, at this user's measured rate.
+  // What the cap buys, at the rate this user's speech is actually written.
   const capacityHours =
-    usage && usage.perHour > 0 ? (limitGb * GB) / usage.perHour : 0;
+    usage && usage.perHour > 0 ? (limitGb * GB) / usage.perHour : null;
 
   return (
     <SettingContainer
-      title={t("settings.debug.recordingRetention.storageTitle")}
-      description={
-        usage
-          ? t("settings.debug.recordingRetention.storageUsage", {
-              used: formatBytes(usage.used),
-              limit: limitGb,
-              perHour: formatBytes(usage.perHour),
-              hours: Math.round(capacityHours),
-            })
-          : t("settings.debug.recordingRetention.storageDescription")
-      }
+      title={t("settings.debug.recordingStorage.title")}
+      description={t("settings.debug.recordingStorage.description")}
       descriptionMode={descriptionMode}
       grouped={grouped}
+      layout="horizontal"
     >
-      <input
-        type="number"
-        min={0.5}
-        max={500}
-        step={0.5}
-        value={limitGb}
-        disabled={isUpdating("recording_storage_limit_gb")}
-        onChange={(e) => {
-          const next = Number(e.target.value);
-          if (Number.isFinite(next)) void onChange(next);
-        }}
-        className="w-24 px-2 py-1 rounded border border-mid-gray/30 bg-background text-text text-sm"
-      />
+      <div className="flex items-center gap-3">
+        {usage && (
+          <span className="text-xs text-mid-gray text-right leading-tight">
+            {t("settings.debug.recordingStorage.usedNow", {
+              used: formatBytes(usage.used),
+              hours: usage.hours.toFixed(1),
+            })}
+            <br />
+            {t("settings.debug.recordingStorage.rate", {
+              perHour: formatBytes(usage.perHour),
+              capacity: capacityHours ? Math.round(capacityHours) : "—",
+            })}
+          </span>
+        )}
+        <Input
+          type="number"
+          min="0.5"
+          max="500"
+          step="0.5"
+          value={limitGb}
+          onChange={handleChange}
+          disabled={isUpdating("recording_storage_limit_gb")}
+          className="w-20"
+        />
+        <span className="text-sm text-text">
+          {t("settings.debug.recordingStorage.gigabytes")}
+        </span>
+      </div>
     </SettingContainer>
   );
 });

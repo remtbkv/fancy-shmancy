@@ -1343,6 +1343,8 @@ pub fn get_stored_binding(app: &AppHandle, id: &str) -> ShortcutBinding {
     binding
 }
 
+// Kept for upstream parity; this fork's retention is a size, not a count.
+#[allow(dead_code)]
 pub fn get_history_limit(app: &AppHandle) -> usize {
     let settings = get_settings(app);
     settings.history_limit
@@ -1352,6 +1354,8 @@ pub fn get_recording_storage_limit_gb(app: &AppHandle) -> f64 {
     get_settings(app).recording_storage_limit_gb
 }
 
+// Kept for upstream parity; this fork retains by size alone.
+#[allow(dead_code)]
 pub fn get_recording_retention_period(app: &AppHandle) -> RecordingRetentionPeriod {
     let settings = get_settings(app);
     settings.recording_retention_period
