@@ -564,7 +564,11 @@
         "days3": "After 3 days",
         "weeks2": "After 2 weeks",
         "months3": "After 3 months",
-        "placeholder": "Select retention period..."
+        "placeholder": "Select retention period...",
+        "storageLimit": "Until {{gb}} GB is used",
+        "storageTitle": "Recording Storage Limit",
+        "storageDescription": "Keep every recording until the folder reaches this size, then drop the oldest first. Nothing is deleted for being old.",
+        "storageUsage": "{{used}} of {{limit}} GB used — about {{perHour}} per hour of talking, so this holds roughly {{hours}} hours."
       },
       "alwaysOnMicrophone": {
         "label": "Always-On Microphone",

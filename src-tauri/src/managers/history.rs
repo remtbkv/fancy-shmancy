@@ -36,6 +36,15 @@ static MIGRATIONS: &[M] = &[
     M::up("ALTER TABLE transcription_history ADD COLUMN cancelled BOOLEAN NOT NULL DEFAULT 0;"),
 ];
 
+/// What the kept audio costs, for a settings screen that has to make a storage
+/// cap mean something.
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+pub struct RecordingStorageUsage {
+    pub bytes_used: f64,
+    pub bytes_per_hour: f64,
+    pub hours_recorded: f64,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub struct PaginatedHistory {
     pub entries: Vec<HistoryEntry>,
@@ -398,6 +407,10 @@ impl HistoryManager {
                 let limit = crate::settings::get_history_limit(&self.app_handle);
                 self.cleanup_by_count(limit)
             }
+            crate::settings::RecordingRetentionPeriod::StorageLimit => {
+                let gb = crate::settings::get_recording_storage_limit_gb(&self.app_handle);
+                self.cleanup_by_size(gb)
+            }
             _ => {
                 // Use time-based logic
                 self.cleanup_by_time(retention_period)
@@ -586,6 +599,84 @@ impl HistoryManager {
     }
 
     /// Get the latest entry with non-empty transcription text.
+    /// Total bytes of audio currently kept, and how much of it a minute of
+    /// dictation costs. The UI shows the second number so a storage cap means
+    /// something before you hit it.
+    pub fn recordings_bytes(&self) -> u64 {
+        let Ok(entries) = fs::read_dir(&self.recordings_dir) else {
+            return 0;
+        };
+        entries
+            .flatten()
+            .filter_map(|e| e.metadata().ok())
+            .filter(|m| m.is_file())
+            .map(|m| m.len())
+            .sum()
+    }
+
+    /// Seconds of audio across every kept recording, read from the WAV headers
+    /// so it costs a stat per file rather than a decode.
+    pub fn total_recorded_seconds(&self) -> Result<f64> {
+        let Ok(entries) = fs::read_dir(&self.recordings_dir) else {
+            return Ok(0.0);
+        };
+        // 16 kHz, mono, 16-bit: 32000 bytes a second, minus the 44-byte header.
+        const BYTES_PER_SECOND: f64 = 32_000.0;
+        let total: f64 = entries
+            .flatten()
+            .filter_map(|e| e.metadata().ok())
+            .filter(|m| m.is_file())
+            .map(|m| m.len().saturating_sub(44) as f64 / BYTES_PER_SECOND)
+            .sum();
+        Ok(total)
+    }
+
+    /// Delete oldest-first until the recordings folder fits the cap. Nothing is
+    /// deleted for being old — only for being the oldest thing still over
+    /// budget, which is what a storage limit actually means.
+    fn cleanup_by_size(&self, limit_gb: f64) -> Result<()> {
+        let limit = (limit_gb.max(0.1) * 1_000_000_000.0) as u64;
+        let mut total = self.recordings_bytes();
+        if total <= limit {
+            return Ok(());
+        }
+
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, file_name FROM transcription_history
+             WHERE saved = 0 ORDER BY timestamp ASC",
+        )?;
+        let rows: Vec<(i64, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get::<_, String>(1)?)))?
+            .flatten()
+            .collect();
+        drop(stmt);
+
+        let mut removed = 0;
+        for (id, file_name) in rows {
+            if total <= limit {
+                break;
+            }
+            let path = self.recordings_dir.join(&file_name);
+            let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            if fs::remove_file(&path).is_ok() {
+                total = total.saturating_sub(size);
+            }
+            conn.execute(
+                "DELETE FROM transcription_history WHERE id = ?1",
+                params![id],
+            )?;
+            removed += 1;
+        }
+        if removed > 0 {
+            info!(
+                "Recordings folder was over its {:.1} GB limit; removed the {} oldest",
+                limit_gb, removed
+            );
+        }
+        Ok(())
+    }
+
     pub fn get_latest_completed_entry(&self) -> Result<Option<HistoryEntry>> {
         let conn = self.get_connection()?;
         Self::get_latest_completed_entry_with_conn(&conn)

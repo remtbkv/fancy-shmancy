@@ -40,6 +40,12 @@ export const RecordingRetentionPeriodSelector: React.FC<RecordingRetentionPeriod
         value: "months3",
         label: t("settings.debug.recordingRetention.months3"),
       },
+      {
+        value: "storage_limit",
+        label: t("settings.debug.recordingRetention.storageLimit", {
+          gb: Number(getSetting("recording_storage_limit_gb") ?? 5),
+        }),
+      },
     ];
 
     return (

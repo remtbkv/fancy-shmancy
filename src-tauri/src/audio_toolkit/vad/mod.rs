@@ -20,6 +20,14 @@ impl<'a> VadFrame<'a> {
 }
 
 pub trait VoiceActivityDetector: Send + Sync {
+    /// The last frame's verdict straight from the detector, before any onset or
+    /// hangover smoothing. The overlay's bar reads this: the tail that keeps a
+    /// word from being clipped is right for a transcript and far too slow for a
+    /// waveform, which has to settle when the speaking does.
+    fn last_raw_voice(&self) -> bool {
+        true
+    }
+
     /// Primary streaming API: feed one 30-ms frame, get keep/drop decision.
     fn push_frame<'a>(&'a mut self, frame: &'a [f32]) -> Result<VadFrame<'a>>;
 

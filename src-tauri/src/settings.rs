@@ -202,6 +202,10 @@ pub enum RecordingRetentionPeriod {
     Days3,
     Weeks2,
     Months3,
+    /// Keep every recording until the folder reaches a size the user picked.
+    /// Age is the wrong axis for dictation: a month-old take is no less useful
+    /// than yesterday's, and what actually runs out is disk.
+    StorageLimit,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
@@ -456,6 +460,8 @@ pub struct AppSettings {
     pub history_limit: usize,
     #[serde(default = "default_recording_retention_period")]
     pub recording_retention_period: RecordingRetentionPeriod,
+    #[serde(default = "default_recording_storage_limit_gb")]
+    pub recording_storage_limit_gb: f64,
     #[serde(default)]
     pub paste_method: PasteMethod,
     #[serde(default)]
@@ -680,7 +686,14 @@ fn default_history_limit() -> usize {
 }
 
 fn default_recording_retention_period() -> RecordingRetentionPeriod {
-    RecordingRetentionPeriod::PreserveLimit
+    RecordingRetentionPeriod::StorageLimit
+}
+
+/// Five gigabytes is roughly 45-50 hours of dictation at the rate these
+/// recordings are written, which is more than enough to train against and far
+/// less than anyone would notice on a modern disk.
+fn default_recording_storage_limit_gb() -> f64 {
+    5.0
 }
 
 fn default_audio_feedback_volume() -> f32 {
@@ -1070,6 +1083,7 @@ pub fn get_default_settings() -> AppSettings {
         word_correction_threshold: default_word_correction_threshold(),
         history_limit: default_history_limit(),
         recording_retention_period: default_recording_retention_period(),
+        recording_storage_limit_gb: default_recording_storage_limit_gb(),
         paste_method: PasteMethod::default(),
         clipboard_handling: ClipboardHandling::default(),
         auto_submit: default_auto_submit(),
@@ -1332,6 +1346,10 @@ pub fn get_stored_binding(app: &AppHandle, id: &str) -> ShortcutBinding {
 pub fn get_history_limit(app: &AppHandle) -> usize {
     let settings = get_settings(app);
     settings.history_limit
+}
+
+pub fn get_recording_storage_limit_gb(app: &AppHandle) -> f64 {
+    get_settings(app).recording_storage_limit_gb
 }
 
 pub fn get_recording_retention_period(app: &AppHandle) -> RecordingRetentionPeriod {

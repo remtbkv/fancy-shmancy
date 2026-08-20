@@ -1,6 +1,6 @@
 use crate::actions::process_transcription_output;
 use crate::managers::{
-    history::{HistoryManager, PaginatedHistory},
+    history::{HistoryManager, PaginatedHistory, RecordingStorageUsage},
     transcription::TranscriptionManager,
 };
 use std::sync::Arc;
@@ -160,6 +160,7 @@ pub async fn update_recording_retention_period(
         "days3" => RecordingRetentionPeriod::Days3,
         "weeks2" => RecordingRetentionPeriod::Weeks2,
         "months3" => RecordingRetentionPeriod::Months3,
+        "storage_limit" => RecordingRetentionPeriod::StorageLimit,
         _ => return Err(format!("Invalid retention period: {}", period)),
     };
 
@@ -171,5 +172,46 @@ pub async fn update_recording_retention_period(
         .cleanup_old_entries()
         .map_err(|e| e.to_string())?;
 
+    Ok(())
+}
+
+/// What the recordings folder costs right now, and what an hour of dictation
+/// adds to it. The second figure is measured from the audio actually kept, not
+/// assumed from the sample format, so it reflects what this user's speech
+/// really costs after silence has been filtered out.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_recording_storage_usage(
+    history_manager: State<'_, Arc<HistoryManager>>,
+) -> Result<RecordingStorageUsage, String> {
+    let bytes = history_manager.recordings_bytes();
+    let seconds = history_manager
+        .total_recorded_seconds()
+        .map_err(|e| e.to_string())?;
+    let bytes_per_hour = if seconds > 1.0 {
+        (bytes as f64 / seconds) * 3600.0
+    } else {
+        0.0
+    };
+    Ok(RecordingStorageUsage {
+        bytes_used: bytes as f64,
+        bytes_per_hour,
+        hours_recorded: seconds / 3600.0,
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn update_recording_storage_limit(
+    app: AppHandle,
+    history_manager: State<'_, Arc<HistoryManager>>,
+    limit_gb: f64,
+) -> Result<(), String> {
+    let mut settings = crate::settings::get_settings(&app);
+    settings.recording_storage_limit_gb = limit_gb.clamp(0.5, 500.0);
+    crate::settings::write_settings(&app, settings);
+    history_manager
+        .cleanup_old_entries()
+        .map_err(|e| e.to_string())?;
     Ok(())
 }

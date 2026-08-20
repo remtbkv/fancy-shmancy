@@ -26,7 +26,13 @@ const FLOW_BULGE = 1 / 48; // how fast the bulge falls off from the centre bar
 const FLOW_GAIN = 5; // level → scale multiplier, and the ceiling on it
 const FLOW_FRAME_MS = 1000 / 60;
 const FLOW_BLEND = 0.85; // retained fraction of the previous level, per frame
-const FLOW_SLEW = 1.6; // max level change per second
+const FLOW_SLEW = 1.6; // max level RISE per second — Wispr's constant
+// Falling is allowed to be quicker than Wispr's symmetric rate. Their bar reads
+// a raw level, so it drops with the sound; ours is gated on a speech verdict,
+// and at 1.6/s the bar would still be coming down half a second after the
+// verdict said stop. This is a deliberate divergence, and the reason the bar
+// settles when the speaking does.
+const FLOW_SLEW_FALL = 6.0;
 // Loudness → level, lifted from Wispr Flow's main process verbatim: keep a floor
 // that only ever descends to the quietest dB this run has seen (never below
 // -60 dBFS), and read the level as how far above that floor the current window
@@ -244,7 +250,8 @@ const RecordingOverlay: React.FC = () => {
       last = now;
       const blend = Math.pow(FLOW_BLEND, dt / FLOW_FRAME_MS);
       const blended = smoothed * blend + flowLevelRef.current * (1 - blend);
-      const limit = (dt / 1000) * FLOW_SLEW;
+      const rising = blended > smoothed;
+      const limit = (dt / 1000) * (rising ? FLOW_SLEW : FLOW_SLEW_FALL);
       const step = Math.min(limit, Math.max(-limit, blended - smoothed));
       smoothed = Math.floor((smoothed + step) * 100) / 100;
       el.style.setProperty(

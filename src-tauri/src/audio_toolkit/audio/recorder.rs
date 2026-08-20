@@ -897,6 +897,15 @@ fn run_consumer(
                     // extra element instead of a second event, so the emission
                     // rate the overlay window sees is unchanged.
                     buckets.push(visualizer.last_dbfs());
+                    // And the detector's own verdict for this frame, before the
+                    // hangover that keeps a trailing word in the transcript. The
+                    // bar has to settle when the speaking does, not half a
+                    // second later.
+                    let voiced = vad
+                        .as_ref()
+                        .map(|cfg| cfg.detector.lock().unwrap().last_raw_voice())
+                        .unwrap_or(true);
+                    buckets.push(if voiced { 1.0 } else { 0.0 });
                     cb(buckets);
                 }
             }
