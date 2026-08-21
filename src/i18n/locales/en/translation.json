@@ -694,7 +694,7 @@
     "portableUpdateBrowseButton": "Open GitHub Releases"
   },
   "whatsNew": {
-    "title": "New in Fancy Shmancy v{{version}}"
+    "title": "Fancy Shmancy"
   },
   "common": {
     "loading": "Loading...",
