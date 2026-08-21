@@ -378,7 +378,7 @@ pub struct AppSettings {
     pub push_to_talk: bool,
     /// Push-to-talk only: double-tapping the transcribe shortcut latches
     /// recording on until the shortcut is pressed again.
-    #[serde(default)]
+    #[serde(default = "default_ptt_double_tap_lock")]
     pub ptt_double_tap_lock: bool,
     /// Throw the recording away when an editing key is pressed while the
     /// transcribe shortcut is held. A held modifier that doubles as the
@@ -602,8 +602,33 @@ fn default_paste_last_transcript_window_secs() -> u64 {
 
 /// Empty by default: an app only needs typing when its input turns a big paste
 /// into an attachment, and which apps those are is the user's to say.
+/// Apps whose input turns a large paste into an attachment rather than text, so
+/// a transcript has to be typed in. Empty was the right default upstream, where
+/// typing out is opt-in; here it is the headline behaviour, and a default of
+/// nothing meant a new user's first long dictation into Claude arrived as a
+/// file. Terminals are on the list for the same reason — a multi-line paste
+/// runs as commands.
+/// On by default: the shortcut is a held modifier, and a tap-tap that latches is
+/// how anyone dictates something longer than a sentence without holding a key
+/// down for a minute.
+fn default_ptt_double_tap_lock() -> bool {
+    true
+}
+
 fn default_typed_out_apps() -> Vec<String> {
-    Vec::new()
+    [
+        "com.anthropic.claudefordesktop",
+        "com.mitchellh.ghostty",
+        "com.apple.Terminal",
+        "com.googlecode.iterm2",
+        "dev.warp.Warp-Stable",
+        "net.kovidgoyal.kitty",
+        "com.github.wez.wezterm",
+        "org.alacritty",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
 }
 
 fn default_translate_to_english() -> bool {
@@ -955,7 +980,10 @@ pub fn get_default_settings() -> AppSettings {
     #[cfg(target_os = "windows")]
     let default_shortcut = "ctrl+space";
     #[cfg(target_os = "macos")]
-    let default_shortcut = "option+space";
+    // The briefer's first line tells a new user to hold Right Option, so that is
+    // what a fresh install binds. A modifier held on its own is also a better
+    // push-to-talk key than a chord.
+    let default_shortcut = "option_right";
     #[cfg(target_os = "linux")]
     let default_shortcut = "ctrl+space";
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
@@ -1069,7 +1097,7 @@ pub fn get_default_settings() -> AppSettings {
         settings_schema_version: default_settings_schema_version(),
         bindings,
         push_to_talk: default_push_to_talk(),
-        ptt_double_tap_lock: false,
+        ptt_double_tap_lock: true,
         cancel_on_editing_keys: default_cancel_on_editing_keys(),
         editing_cancel_keys: default_editing_cancel_keys(),
         editing_cancel_grace_ms: default_editing_cancel_grace_ms(),
@@ -1863,5 +1891,34 @@ mod tests {
         let out = format!("{:?}", map);
         assert!(!out.contains("secret"));
         assert!(out.contains("[REDACTED]"));
+    }
+}
+
+#[cfg(test)]
+mod briefer_defaults_tests {
+    use super::*;
+
+    /// The first-launch note tells a new user to hold Right Option and double-tap
+    /// to lock, and puts typed-into-Claude at the top of the list. A default that
+    /// contradicts any of those makes the first thing they read wrong.
+    #[test]
+    fn a_fresh_install_matches_what_the_briefer_promises() {
+        let settings = get_default_settings();
+
+        let transcribe = settings
+            .bindings
+            .get("transcribe")
+            .expect("a transcribe binding");
+        assert_eq!(transcribe.current_binding, "option_right");
+
+        assert!(settings.push_to_talk, "hold-to-talk, not toggle");
+        assert!(settings.ptt_double_tap_lock, "double-tap has to latch");
+        assert!(
+            settings
+                .typed_out_apps
+                .iter()
+                .any(|a| a == "com.anthropic.claudefordesktop"),
+            "Claude must be typed into, or a long dictation lands as an attachment"
+        );
     }
 }
