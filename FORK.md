@@ -100,3 +100,23 @@ sees what is new.
   sync should leave that number unchanged, not reduce it to zero.
 - `mute_while_recording` is still honored in Rust with no UI to reach it; the
   toggle was dropped on purpose.
+
+## Building a copy for someone else
+
+    bun run tauri build --bundles app --config export.conf.json
+
+The override exists for one reason: the app's own identifier is still
+`com.pais.handy`, upstream's. A build carrying that collides with an installed
+Handy on the recipient's machine, shares its settings and permissions, and — as
+three failed test runs showed — cannot even be launched alongside one, because
+the single-instance plugin forwards to whichever copy is already running. Under
+its own identifier it is a separate app to macOS: separate data, separate
+microphone and accessibility grants, separate instance lock.
+
+Do not build the copy you use daily with this override. Your recordings and
+settings live under `com.pais.handy`, and a different identifier means a
+different data directory — the app would come up empty.
+
+The build is signed with a local identity and is not notarized, so Gatekeeper
+blocks it on any other Mac. The recipient right-clicks the app and picks Open
+the first time; every launch after that is normal.
