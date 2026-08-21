@@ -215,3 +215,43 @@ pub async fn update_recording_storage_limit(
         .map_err(|e| e.to_string())?;
     Ok(())
 }
+
+/// The folder recordings are written to right now, so the settings screen can
+/// show it rather than describing it.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_recordings_dir(
+    history_manager: State<'_, Arc<HistoryManager>>,
+) -> Result<String, String> {
+    Ok(history_manager
+        .recordings_dir()
+        .to_string_lossy()
+        .to_string())
+}
+
+/// Choose where recordings go. An empty string restores the default. Existing
+/// recordings stay where they are — moving a user's audio without being asked
+/// is not a thing a settings toggle should do.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_recordings_dir(
+    app: AppHandle,
+    history_manager: State<'_, Arc<HistoryManager>>,
+    dir: String,
+) -> Result<String, String> {
+    let trimmed = dir.trim().to_string();
+    if !trimmed.is_empty() {
+        std::fs::create_dir_all(&trimmed).map_err(|e| format!("Cannot use that folder: {e}"))?;
+    }
+    let mut settings = crate::settings::get_settings(&app);
+    settings.recordings_dir = if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    };
+    crate::settings::write_settings(&app, settings);
+    Ok(history_manager
+        .recordings_dir()
+        .to_string_lossy()
+        .to_string())
+}

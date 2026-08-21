@@ -37,3 +37,4 @@ export { AutostartToggle } from "./AutostartToggle";
 export { UpdateChecksToggle } from "./UpdateChecksToggle";
 export { ShowWhatsNewOnUpdate } from "./ShowWhatsNewOnUpdate";
 export { RecordingStorageLimit } from "./RecordingStorageLimit";
+export { RecordingsFolder } from "./RecordingsFolder";

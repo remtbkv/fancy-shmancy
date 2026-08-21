@@ -642,6 +642,12 @@
         "gigabytes": "GB",
         "usedNow": "{{used}} used · {{hours}} h kept",
         "rate": "≈{{perHour}} per hour · fits ~{{capacity}} h"
+      },
+      "recordingsFolder": {
+        "title": "Recordings Folder",
+        "description": "Where recordings are written. Existing ones stay where they are.",
+        "choose": "Choose…",
+        "reset": "Default"
       }
     },
     "about": {

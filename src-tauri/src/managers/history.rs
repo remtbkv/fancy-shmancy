@@ -226,8 +226,22 @@ impl HistoryManager {
         })
     }
 
-    pub fn recordings_dir(&self) -> &std::path::Path {
-        &self.recordings_dir
+    /// Where recordings go right now. Read from settings each time so choosing a
+    /// new folder takes effect on the next recording rather than the next
+    /// launch; falls back to the folder beside the app's data when unset or
+    /// when the chosen one cannot be created.
+    pub fn recordings_dir(&self) -> PathBuf {
+        let configured = crate::settings::get_settings(&self.app_handle).recordings_dir;
+        let Some(dir) = configured.filter(|d| !d.trim().is_empty()) else {
+            return self.recordings_dir.clone();
+        };
+        let path = PathBuf::from(dir);
+        if path.is_dir() || fs::create_dir_all(&path).is_ok() {
+            path
+        } else {
+            error!("Chosen recordings folder is unusable, falling back to the default");
+            self.recordings_dir.clone()
+        }
     }
 
     /// Save a new history entry to the database.

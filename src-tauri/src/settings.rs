@@ -468,6 +468,12 @@ pub struct AppSettings {
     /// else's.
     #[serde(default = "default_flow_span_init_db")]
     pub flow_span_init_db: f64,
+    /// Where recordings are written. `None` keeps them beside the app's other
+    /// data; a path puts them wherever the user would rather have them — an
+    /// external disk, a synced folder, somewhere they can find without knowing
+    /// what a bundle identifier is.
+    #[serde(default)]
+    pub recordings_dir: Option<String>,
     #[serde(default)]
     pub paste_method: PasteMethod,
     #[serde(default)]
@@ -1130,6 +1136,7 @@ pub fn get_default_settings() -> AppSettings {
         recording_retention_period: default_recording_retention_period(),
         recording_storage_limit_gb: default_recording_storage_limit_gb(),
         flow_span_init_db: default_flow_span_init_db(),
+        recordings_dir: None,
         paste_method: PasteMethod::default(),
         clipboard_handling: ClipboardHandling::default(),
         auto_submit: default_auto_submit(),

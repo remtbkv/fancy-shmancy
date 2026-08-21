@@ -179,7 +179,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // shipped default stands until there is enough audio to beat it.
     {
         let app = app_handle.clone();
-        let dir = history_manager.recordings_dir().to_path_buf();
+        let dir = history_manager.recordings_dir();
         std::thread::spawn(move || {
             if !managers::flow_tuning::is_due(&dir) {
                 return;
@@ -203,7 +203,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // the same directory, so the audio shows up in history to be transcribed
     // rather than being silently orphaned.
     for file_name in managers::partial_recording::PartialRecording::recover_orphans(
-        history_manager.recordings_dir(),
+        &history_manager.recordings_dir(),
     ) {
         if let Err(e) = history_manager.save_cancelled_entry(file_name) {
             log::error!("Recovered a recording but could not file it in history: {e}");
@@ -806,6 +806,8 @@ pub fn run(cli_args: CliArgs) {
             commands::history::update_recording_retention_period,
             commands::history::get_recording_storage_usage,
             commands::history::update_recording_storage_limit,
+            commands::history::get_recordings_dir,
+            commands::history::set_recordings_dir,
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![
