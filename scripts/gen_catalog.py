@@ -42,12 +42,19 @@ def acc_from_wer(wer):
 # rank = editorial sort position (broad ordering). rec = the small "Recommended"
 # badge / onboarding subset — independent of rank, so a model can rank high
 # without carrying the recommended tag.
+# This fork offers three, ranked by the accuracy score in this file rather than
+# by language coverage: most people dictating in English do not benefit from a
+# model that also knows 99 other languages, and a first-run list of five with
+# two multilingual entries is a decision a new user has no basis to make.
+# Biggest first, then a smaller English one, then one that runs on anything.
 CURATION = {
-    "parakeet-unified-en-0.6b":        {"rank": 1, "rec": True, "desc": "Fast, accurate live English transcription"},
-    "nemotron-3.5-asr-streaming-0.6b": {"rank": 2, "rec": True, "desc": "Live multilingual transcription across 28 languages"},
+    "cohere-transcribe-03-2026":       {"rank": 1, "rec": True, "desc": "Most accurate. 2B, needs a recent Mac"},
+    "parakeet-unified-en-0.6b":        {"rank": 2, "rec": True, "desc": "Nearly as accurate, three times lighter. English"},
     "canary-180m-flash":               {"rank": 3, "rec": True, "desc": "Tiny and instant, runs well on any hardware"},
-    "cohere-transcribe-03-2026":       {"rank": 4, "rec": True, "desc": "Highest accuracy, 14 languages, slower"},
-    "whisper-medium":                  {"rank": 5, "rec": True, "desc": "Broadest language, but may run a bit slow"},
+    # ranked but no longer offered up front: both are multilingual, and both
+    # score below all three above on accuracy.
+    "nemotron-3.5-asr-streaming-0.6b": {"rank": 4, "desc": "Live multilingual transcription across 28 languages"},
+    "whisper-medium":                  {"rank": 5, "desc": "Broadest language, but may run a bit slow"},
     # ranked (sorted high) but NOT tagged recommended
     "Voxtral-Mini-4B-Realtime-2602":   {"rank": 6, "desc": "Live multilingual, excellent on powerful machines"},
     "parakeet-tdt-0.6b-v3":            {"rank": 7, "desc": "Fast and accurate. Supports 25 European languages"},
