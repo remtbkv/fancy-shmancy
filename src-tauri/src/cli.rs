@@ -72,4 +72,9 @@ pub struct CliArgs {
     /// Emit --transcribe-file results as JSON.
     #[arg(long)]
     pub json: bool,
+
+    /// Run the steady-noise suppressor over the WAV before transcribing it, so
+    /// the same audio can be compared with and without.
+    #[arg(long)]
+    pub denoise: bool,
 }

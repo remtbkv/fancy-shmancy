@@ -534,6 +534,14 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
             return 2;
         }
     };
+    // Same audio, one difference, so the two transcripts are comparable.
+    let samples = if args.denoise {
+        let cleaned = crate::audio_toolkit::suppress_steady_noise(&samples, 16_000);
+        eprintln!("note: steady-noise suppression applied (300-2400 Hz)");
+        cleaned
+    } else {
+        samples
+    };
     let audio_secs = samples.len() as f64 / 16_000.0;
 
     let tm = app.state::<Arc<TranscriptionManager>>();
