@@ -1,9 +1,11 @@
 import React, { useEffect, useState, useRef, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
-import { Plus, X } from "lucide-react";
+import { Plus, RotateCcw, X } from "lucide-react";
 import { formatKeyCombination } from "../../lib/utils/keyboard";
+import { KeycapPill } from "../ui/KeycapPill";
 import { ResetButton } from "../ui/ResetButton";
+import { IconAction } from "./modal/controls";
 import { SettingContainer } from "../ui/SettingContainer";
 import { useSettings } from "../../hooks/useSettings";
 import { useOsType } from "../../hooks/useOsType";
@@ -17,6 +19,8 @@ interface HandyKeysShortcutInputProps {
   grouped?: boolean;
   shortcutId: string;
   disabled?: boolean;
+  /** See `ShortcutInput`: `none` renders the recorder without its container. */
+  chrome?: "container" | "none";
 }
 
 interface HandyKeysEvent {
@@ -31,6 +35,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
   grouped = false,
   shortcutId,
   disabled = false,
+  chrome = "container",
 }) => {
   const { t } = useTranslation();
   const {
@@ -270,6 +275,115 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
     if (!currentKeys) return t("settings.general.shortcut.pressKeys");
     return formatKeyCombination(currentKeys, osType);
   };
+
+  // The settings modal supplies the title and the value line itself, so the
+  // recorder renders as the row's control: every combination bound to this
+  // action as an orange keycap, plus add and reset. Same handlers as below.
+  if (chrome === "none") {
+    if (isLoading || !binding) {
+      return (
+        <span
+          style={{
+            fontFamily: "var(--fs-font-sans)",
+            fontSize: "var(--fs-text-body)",
+            color: "var(--fs-ink-muted)",
+          }}
+        >
+          {t(
+            isLoading
+              ? "settings.general.shortcut.loading"
+              : "settings.general.shortcut.none",
+          )}
+        </span>
+      );
+    }
+
+    const recordingPill = (
+      <span
+        className="inline-flex items-center whitespace-nowrap"
+        style={{
+          height: "24px",
+          paddingInline: "8px",
+          borderRadius: "var(--fs-radius-item)",
+          background: "var(--fs-quiet)",
+          fontFamily: "var(--fs-font-sans)",
+          fontSize: "var(--fs-text-body)",
+          fontWeight: 600,
+          color: "var(--fs-ink)",
+        }}
+      >
+        {formatCurrentKeys()}
+      </span>
+    );
+
+    return (
+      <div ref={containerRef} className="flex items-center gap-[4px]">
+        <div className="flex flex-wrap items-center justify-end gap-[4px]">
+          {shortcuts.length === 0 && recordingIndex === null && (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => startRecording(0)}
+              className="cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+              style={{
+                fontFamily: "var(--fs-font-sans)",
+                fontSize: "var(--fs-text-body)",
+                color: "var(--fs-ink-muted)",
+              }}
+            >
+              {t("settings.general.shortcut.addFirst")}
+            </button>
+          )}
+          {shortcuts.map((shortcut, index) => (
+            <span key={`${shortcut}-${index}`} className="group inline-flex">
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => startRecording(index)}
+                aria-label={t("settings.general.shortcut.title")}
+                className="flex cursor-pointer items-center disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ height: "var(--fs-control-h)", paddingInline: "4px" }}
+              >
+                {recordingIndex === index ? (
+                  recordingPill
+                ) : (
+                  <KeycapPill shortcut={shortcut} size="sm" />
+                )}
+              </button>
+              {shortcuts.length > 1 && (
+                <IconAction
+                  onClick={() => void removeShortcut(index)}
+                  label={t("settings.general.shortcut.remove")}
+                  disabled={disabled || recordingIndex !== null}
+                >
+                  <X size={12} aria-hidden />
+                </IconAction>
+              )}
+            </span>
+          ))}
+          {recordingIndex === shortcuts.length && shortcuts.length > 0 && (
+            <span className="flex items-center px-[4px]">{recordingPill}</span>
+          )}
+        </div>
+        {shortcuts.length > 0 && (
+          <IconAction
+            onClick={() => void startRecording(shortcuts.length)}
+            label={t("settings.general.shortcut.add")}
+            disabled={disabled || recordingIndex !== null}
+          >
+            <Plus size={14} aria-hidden />
+          </IconAction>
+        )}
+        <IconAction
+          onClick={() => void resetBinding(shortcutId)}
+          label={t("settings.modal.shortcuts.reset")}
+          disabled={disabled || isUpdating(`binding_${shortcutId}`)}
+        >
+          <RotateCcw size={14} aria-hidden />
+        </IconAction>
+      </div>
+    );
+  }
 
   // If still loading, show loading state
   if (isLoading) {

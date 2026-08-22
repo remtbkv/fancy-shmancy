@@ -25,7 +25,7 @@ interface LanguageSelectorProps {
 // canonical *base* code ("en") so the highlighted picker item matches an entry
 // in the LANGUAGES list. Matching is base-aware (`supportsLanguageCode` strips
 // region/script subtags), so a model advertising full locales still resolves.
-const effectiveLanguage = (
+export const effectiveLanguage = (
   intent: string,
   supported: string[],
   supportsDetection: boolean,

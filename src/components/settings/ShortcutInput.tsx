@@ -8,6 +8,12 @@ interface ShortcutInputProps {
   grouped?: boolean;
   shortcutId: string;
   disabled?: boolean;
+  /**
+   * `none` drops the old setting container and renders the recorder alone, for
+   * the settings modal's `SettingRow`. The recording logic is identical either
+   * way.
+   */
+  chrome?: "container" | "none";
 }
 
 /**

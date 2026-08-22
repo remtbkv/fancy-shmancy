@@ -682,6 +682,60 @@
           "details": "Local speech-to-text is built on transcribe.cpp and ggml. Thanks to the amazing work by Georgi Gerganov and contributors."
         }
       }
+    },
+    "modal": {
+      "title": "Settings",
+      "version": "Fancy Shmancy v{{version}}",
+      "pages": {
+        "system": "System",
+        "storage": "History & Storage"
+      },
+      "groups": {
+        "dictation": "Dictation",
+        "interface": "Interface",
+        "appSettings": "App settings",
+        "updates": "Updates",
+        "acceleration": "Acceleration",
+        "listening": "Listening",
+        "recordings": "Recordings",
+        "postProcessing": "Post-processing"
+      },
+      "rows": {
+        "dictationLanguage": "Dictation Language",
+        "change": "Change",
+        "configure": "Configure",
+        "back": "Back",
+        "previewSound": "Preview sounds",
+        "percent": "{{value}}%",
+        "storageUsage": "{{used}} used · {{hours}} h kept · ≈{{perHour}} per hour, fits about {{capacity}} h",
+        "lastPasteTarget": "Last app pasted into",
+        "postProcessing": "AI post-processing"
+      },
+      "shortcuts": {
+        "reset": "Reset to default",
+        "hints": {
+          "transcribe": "Hold and speak.",
+          "transcribe_hands_free": "Press once to start, again to stop.",
+          "submit_transcription": "Finish the take and press Enter.",
+          "paste_last_transcript": "Paste the last thing you dictated.",
+          "cancel": "Drop the recording in progress."
+        }
+      },
+      "hints": {
+        "pttDoubleTapLock": "Double-tap to keep recording hands-free.",
+        "appLanguage": "Language of the app's own interface.",
+        "pausePlayback": "Pause music while you dictate, then start it again.",
+        "vad": "Filter silence out of recordings.",
+        "pasteWindow": "How recent the last transcript must be to be pasted.",
+        "typedOutApps": "Apps that get the transcript typed out, by bundle id.",
+        "fillerWords": "Drop hesitation words from transcriptions.",
+        "translateToEnglish": "Translate other languages to English as you dictate.",
+        "cancelOnEditingKeys": "Drop the take if an editing key is pressed.",
+        "editingCancelGrace": "How long the overlay waits before appearing.",
+        "postProcessing": "Refine transcripts with an LLM.",
+        "experimental": "Show features still in development.",
+        "lazyStreamClose": "Keep the mic open for 30s after a take."
+      }
     }
   },
   "footer": {

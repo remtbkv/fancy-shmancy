@@ -1,3 +1,8 @@
+// The ported settings modal. The page components below stay exported until the
+// old sidebar pages are retired.
+export { default as SettingsModal } from "./SettingsModal";
+export type { SettingsModalProps, SettingsPage } from "./SettingsModal";
+
 // Settings section components
 export { GeneralSettings } from "./general/GeneralSettings";
 export { AdvancedSettings } from "./advanced/AdvancedSettings";
