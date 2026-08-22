@@ -1,45 +1,10 @@
-// The ported settings modal. The page components below stay exported until the
-// old sidebar pages are retired.
+// The ported settings modal, plus the three section components the shell still
+// mounts as pages of its own. Individual setting components are imported by
+// their own path — the barrel is not an inventory.
 export { default as SettingsModal } from "./SettingsModal";
 export type { SettingsModalProps, SettingsPage } from "./SettingsModal";
 
-// Settings section components
-export { GeneralSettings } from "./general/GeneralSettings";
-export { AdvancedSettings } from "./advanced/AdvancedSettings";
 export { DebugSettings } from "./debug/DebugSettings";
-export { HistorySettings } from "./history/HistorySettings";
 export { AboutSettings } from "./about/AboutSettings";
-export { PostProcessingSettings } from "./post-processing/PostProcessingSettings";
 export { ModelsSettings } from "./models/ModelsSettings";
-
-// Individual setting components
-export { MicrophoneSelector } from "./MicrophoneSelector";
-export { ChannelSelector } from "./ChannelSelector";
-export { ClamshellMicrophoneSelector } from "./ClamshellMicrophoneSelector";
-export { OutputDeviceSelector } from "./OutputDeviceSelector";
-export { AlwaysOnMicrophone } from "./AlwaysOnMicrophone";
-export { PushToTalk } from "./PushToTalk";
-export { CancelOnEditingKeys } from "./CancelOnEditingKeys";
-export { EditingCancelGrace } from "./EditingCancelGrace";
-export { PasteLastTranscriptWindow } from "./PasteLastTranscriptWindow";
-export { AudioFeedback } from "./AudioFeedback";
-export { ShowOverlay } from "./ShowOverlay";
-export { GlobalShortcutInput } from "./GlobalShortcutInput";
-export { HandyKeysShortcutInput } from "./HandyKeysShortcutInput";
-export { ShortcutInput } from "./ShortcutInput";
-export { TranslateToEnglish } from "./TranslateToEnglish";
 export { CustomWords } from "./CustomWords";
-export { PostProcessingToggle } from "./PostProcessingToggle";
-export { PostProcessingSettingsApi } from "./PostProcessingSettingsApi";
-export { PostProcessingSettingsPrompts } from "./PostProcessingSettingsPrompts";
-export { FillerWordRemoval } from "./FillerWordRemoval";
-export { AppDataDirectory } from "./AppDataDirectory";
-export { ModelUnloadTimeoutSetting } from "./ModelUnloadTimeout";
-export { StartHidden } from "./StartHidden";
-export { HistoryLimit } from "./HistoryLimit";
-export { RecordingRetentionPeriodSelector } from "./RecordingRetentionPeriod";
-export { AutostartToggle } from "./AutostartToggle";
-export { UpdateChecksToggle } from "./UpdateChecksToggle";
-export { ShowWhatsNewOnUpdate } from "./ShowWhatsNewOnUpdate";
-export { RecordingStorageLimit } from "./RecordingStorageLimit";
-export { RecordingsFolder } from "./RecordingsFolder";
