@@ -2479,7 +2479,7 @@ pub fn get_available_accelerators() -> AvailableAccelerators {
 /// tail of a long recording going missing. Its own limits are far away (a 400s
 /// encoder span, a 512-token output budget that never reported truncation
 /// here), so this is the trained span, not a bound the runtime enforces.
-/// Measured on two of Rem's recordings by transcribing prefixes and comparing
+/// Measured on two real recordings by transcribing prefixes and comparing
 /// words per second against the same speech in short pieces: flat and complete
 /// through 50s, erratic and lossy from 55s on (102s of speech came back as 65s
 /// of text; 120s came back as roughly a third).

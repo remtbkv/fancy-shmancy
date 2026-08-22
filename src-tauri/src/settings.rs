@@ -738,8 +738,9 @@ fn default_recording_storage_limit_gb() -> f64 {
     5.0
 }
 
-/// Until there are enough recordings to measure, the value the sweep over Rem's
-/// corpus picked. Anyone else's is derived from their own audio.
+/// Until there are enough recordings to measure, the value a sweep over an
+/// 11-hour reference corpus picked. After that it is derived from this
+/// machine's own audio.
 fn default_flow_span_init_db() -> f64 {
     10.0
 }

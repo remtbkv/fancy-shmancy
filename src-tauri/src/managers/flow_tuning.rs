@@ -4,8 +4,8 @@
 //! The bar reads a level as how far above the room floor a window sits, over a
 //! span. That span is learned live within a second or two, but the value it
 //! *starts* from is a guess — and Wispr's guess of 20 dB is wrong for anyone
-//! whose rooms are noisier than theirs. Measured over 915 of Rem's recordings
-//! the gap between his quiet frames and his speech has a median of 12.4 dB, and
+//! whose rooms are noisier than theirs. Measured over one machine's 915
+//! recordings, the gap between quiet frames and speech has a median of 12.4 dB, and
 //! a fixed 20 filled the bar in 13.7% of them.
 //!
 //! So the starting span is derived from the recordings on this machine rather
@@ -28,7 +28,7 @@ const MIN_FRAMES: usize = 60;
 const SPAN_MIN_DB: f64 = 8.0;
 const SPAN_MAX_DB: f64 = 24.0;
 /// Re-tune once this much new audio has accumulated. Below this the median
-/// barely moves — two weeks of Rem's audio drifted 0.8 dB — so re-deriving more
+/// barely moves — two weeks of real audio drifted 0.8 dB — so re-deriving more
 /// often would just be spending I/O to arrive at the same number.
 pub const RETUNE_EVERY_HOURS: f64 = 2.0;
 

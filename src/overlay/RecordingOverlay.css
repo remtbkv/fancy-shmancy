@@ -1,10 +1,10 @@
 @import "../styles/theme.css";
 
 /* ============================================================
-   Flow-bar tokens — the recording pill is a faithful copy of Wispr Flow's
-   status bar, so its geometry, colours, easing curves and keyframes are the
-   values that app ships rather than anything derived from this app's theme.
-   Light/dark flip the same two tokens Wispr flips.
+   Flow-bar tokens — the recording pill matches Wispr Flow's status bar, so
+   its geometry, colours, easing curves and keyframes are measured values
+   rather than anything derived from this app's theme. Light/dark flip the
+   same two tokens Wispr flips.
    ============================================================ */
 :root {
   --w-surface: #000; /* pill fill */
@@ -417,9 +417,8 @@
 }
 
 /* ============================================================
-   Flow bar — Wispr Flow's dictation bar, rebuilt from the rules its own
-   bundle ships (`Wispr Flow.app/Contents/Resources/app.asar`, the status
-   renderer's `thoughtBubble` / `waveform` / `bar` modules, bottom dock).
+   Flow bar — modeled on Wispr Flow's dictation bar (bottom dock), measured
+   frame-by-frame against the real thing.
 
    The bar is a fixed-size capsule per state, not a content-hugging one:
    Wispr sizes it 40x8 at rest, 73x30 while the mic is open and 98x30 while

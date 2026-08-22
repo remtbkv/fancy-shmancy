@@ -15,7 +15,7 @@ import { getLanguageDirection } from "@/lib/utils/rtl";
 type OverlayState = "recording" | "streaming" | "transcribing" | "processing";
 
 // ---- Flow bar ---------------------------------------------------------------
-// The compact overlay is a copy of Wispr Flow's status bar, down to the numbers:
+// The compact overlay is modeled on Wispr Flow's status bar, down to the numbers:
 // ten bars, each with a fixed bulge factor that fattens the middle of the row,
 // and a delay ramp that runs 0 → 0.4s outward from the centre and negative on
 // the far half, so the bounce sweeps symmetrically. Level is smoothed the same
@@ -37,7 +37,7 @@ const FLOW_SLEW_FALL = 6.0;
 // quietest dB it has seen, clamped at -60, and reads the level as how far above
 // that floor the current window sits over a 20 dB span.
 //
-// That assumes a quiet room, and Rem's often are not. Measured off his own
+// That assumes a quiet room, and real rooms often are not. Measured off real
 // recordings: ambient sits at -34 to -38 dBFS, so once the floor has descended
 // to -60 the ambient alone maps to 1.0 — the top of the range — and the bar is
 // pinned full-height by an empty room. It only looked fine on short recordings
@@ -59,12 +59,11 @@ const FLOW_SUPPRESS_AFTER_PACKETS = 2;
 const FLOW_FLOOR_MIN_DB = -70;
 const FLOW_FLOOR_MAX_DB = -25;
 // Wispr reads the level over a fixed 20 dB above the floor, which assumes 20 dB
-// between a room and a voice. Measured across all 915 of Rem's recordings —
-// 11 hours — the gap between his quiet frames and his speech has a median of
-// 12.4 dB and a 5th percentile of 6.8; 94% of them sit under 20. So on his
-// audio that constant fills the bar in 13.7% of recordings and leaves the
-// median at 0.62, which is the bar using two thirds of its height at his
-// loudest.
+// between a room and a voice. Measured across a 915-recording, 11-hour corpus,
+// the gap between quiet frames and speech has a median of 12.4 dB and a 5th
+// percentile of 6.8; 94% of recordings sit under 20. So on that audio the
+// fixed constant fills the bar in 13.7% of recordings and leaves the median
+// at 0.62, which is the bar using two thirds of its height at the loudest.
 //
 // So the span is learned, not assumed: it opens to any speech peak further above
 // the floor than the current span, and closes at about 3 dB a second otherwise.
