@@ -1327,6 +1327,11 @@ impl TranscriptionManager {
 
     const SAMPLE_RATE: usize = 16_000;
 
+    /// How much silence goes in front of the audio when a repetition loop is
+    /// re-decoded. 200ms: enough to shift the encoder's frames, short enough
+    /// that nothing else about the decode is disturbed.
+    const REDECODE_LEAD_SILENCE: usize = Self::SAMPLE_RATE / 5;
+
     /// The sample count past which the loaded model needs its audio split up,
     /// or `None` when the engine handles long recordings itself (whisper walks
     /// its own 30s windows) — or when there is no engine to ask, which callers
@@ -1479,7 +1484,55 @@ impl TranscriptionManager {
         Ok(drop_echoed_sentence(&parts.join(" ")))
     }
 
+    /// Transcribe one piece of audio, with the stuck-decoder repair applied.
+    ///
+    /// The decode itself is [`Self::decode_once`]; this only adds the second
+    /// opinion that a repetition loop needs (see [`repeated_run`]).
     fn transcribe_once(&self, audio: Vec<f32>) -> Result<String> {
+        let text = self.decode_once(&audio)?;
+        let Some(run) = repeated_run(&text) else {
+            return Ok(text);
+        };
+
+        // The decoder is deterministic, so asking it again changes nothing —
+        // the audio has to move first. Silence in front of the same samples
+        // shifts every frame the encoder sees, which is what unsticks it;
+        // measured on the recording this was found in, leading silence broke
+        // the loop where a gain change and trailing silence did not.
+        let mut shifted = vec![0.0; Self::REDECODE_LEAD_SILENCE];
+        shifted.extend_from_slice(&audio);
+        let second = match self.decode_once(&shifted) {
+            Ok(second) => second,
+            // A failed second opinion is not worth failing the transcription
+            // over — keep what the first decode said.
+            Err(e) => {
+                warn!("Re-decoding a repeated run failed, keeping the first transcript: {e}");
+                return Ok(text);
+            }
+        };
+
+        // The second decode votes on whether the word is repeated at all, and
+        // nothing finer: asked again, a real "dot dot dot" came back as two
+        // dots, so counting its copies would have trimmed a word the speaker
+        // said. Anything above a single copy is taken as agreement.
+        let second_opinion = longest_run_of(&second, run.word());
+        if second_opinion > 1 {
+            debug!(
+                "Kept {}x '{}' — re-decoding the audio repeated it too",
+                run.len(),
+                run.word()
+            );
+            return Ok(text);
+        }
+        info!(
+            "Decoder repeated '{}' {} times where re-decoding the audio says it belongs once",
+            run.word(),
+            run.len()
+        );
+        Ok(run.keep_one_copy(&text))
+    }
+
+    fn decode_once(&self, audio: &[f32]) -> Result<String> {
         #[cfg(debug_assertions)]
         if std::env::var("HANDY_FORCE_TRANSCRIPTION_FAILURE").is_ok() {
             return Err(anyhow::anyhow!(
@@ -2584,6 +2637,122 @@ fn drop_echoed_sentence(text: &str) -> String {
     kept.join(" ")
 }
 
+/// How many copies of a word in a row stop being speech. Two is ordinary —
+/// "that that", "to to", every other dictation has one. Three in a row with
+/// nothing between them showed up once in 1386 recordings, and it was the
+/// decoder, not the speaker.
+const REPEAT_RUN_MIN: usize = 3;
+
+/// A word the decoder wrote several times in a row with no punctuation between
+/// the copies, located in the text it came from.
+struct RepeatedRun {
+    /// The repeated word, stripped down to what makes two copies the same one.
+    word: String,
+    /// Byte offset of each copy.
+    starts: Vec<usize>,
+}
+
+impl RepeatedRun {
+    fn word(&self) -> &str {
+        &self.word
+    }
+
+    fn len(&self) -> usize {
+        self.starts.len()
+    }
+
+    /// `text` with all but the last copy of the run removed. The last one is
+    /// what stays because the punctuation that follows the run is attached to
+    /// it; every other byte of the transcript is left alone.
+    fn keep_one_copy(&self, text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        out.push_str(&text[..self.starts[0]]);
+        out.push_str(&text[*self.starts.last().expect("a run has copies")..]);
+        out
+    }
+}
+
+/// The first run of a word repeated [`REPEAT_RUN_MIN`] times or more with
+/// nothing but a space between the copies.
+///
+/// This is what a decoder stuck in a loop leaves behind: cohere-transcribe met
+/// one unclear word ("card") and wrote it three times, where the audio has it
+/// once. Punctuation is what separates that from a person repeating themselves
+/// — "Testing, testing, testing" is dictated with the commas, a loop is not —
+/// but it is only a hint, so a hit here is a question for the audio
+/// ([`TranscriptionManager::transcribe_once`]) rather than an answer.
+fn repeated_run(text: &str) -> Option<RepeatedRun> {
+    let words = words_with_offsets(text);
+    let mut i = 0;
+    while i < words.len() {
+        let word = bare_word(words[i].1);
+        let mut last = i;
+        while last + 1 < words.len()
+            && ends_unpunctuated(words[last].1)
+            && bare_word(words[last + 1].1) == word
+        {
+            last += 1;
+        }
+        if !word.is_empty() && last - i + 1 >= REPEAT_RUN_MIN {
+            return Some(RepeatedRun {
+                word,
+                starts: words[i..=last].iter().map(|(at, _)| *at).collect(),
+            });
+        }
+        i = last + 1;
+    }
+    None
+}
+
+/// How many times in a row `word` appears in `text` at its most repetitive.
+/// Punctuation between the copies doesn't break the count here — the question
+/// this answers is how many times the speaker said it, not how the decoder
+/// wrote it down.
+fn longest_run_of(text: &str, word: &str) -> usize {
+    let mut longest = 0;
+    let mut run = 0;
+    for (_, token) in words_with_offsets(text) {
+        run = if bare_word(token) == word { run + 1 } else { 0 };
+        longest = longest.max(run);
+    }
+    longest
+}
+
+/// Every whitespace-separated word of `text`, each with the byte offset it
+/// starts at. Punctuation stays attached to its word.
+fn words_with_offsets(text: &str) -> Vec<(usize, &str)> {
+    let mut out = Vec::new();
+    let mut start = None;
+    for (at, ch) in text.char_indices() {
+        match (ch.is_whitespace(), start) {
+            (false, None) => start = Some(at),
+            (true, Some(from)) => {
+                out.push((from, &text[from..at]));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(from) = start {
+        out.push((from, &text[from..]));
+    }
+    out
+}
+
+/// A word reduced to what makes two copies of it the same word: lowercase,
+/// without the punctuation hanging off either end.
+fn bare_word(word: &str) -> String {
+    word.trim_matches(|c: char| !c.is_alphanumeric() && c != '\'')
+        .to_lowercase()
+}
+
+/// Whether `word` runs straight into the next one — no comma, no full stop.
+fn ends_unpunctuated(word: &str) -> bool {
+    word.chars()
+        .next_back()
+        .is_some_and(|last| last.is_alphanumeric())
+}
+
 /// `text` split on sentence ends, trimmed and without the empties. The
 /// terminator stays with its sentence.
 fn sentences(text: &str) -> Vec<&str> {
@@ -2784,6 +2953,66 @@ mod tests {
              boards though. If you look at the messages in the past week, I probably said this \
              almost every other day. Like, oh, we need to start working on it."
         );
+    }
+
+    /// The real one, from the 17:25 dictation on 2026-08-22: one unclear word,
+    /// written three times. The same clip decodes to it every time, and to a
+    /// single word once the audio is shifted, so the repair is to trim the run
+    /// back to what the second decode supports.
+    #[test]
+    fn a_word_the_decoder_stuck_on_is_trimmed_to_what_the_audio_has() {
+        let looped = "If the coach walks away and walks back, they'll see a new number and the \
+             same card card card, and it will be all good.";
+        let run = repeated_run(looped).expect("three copies in a row is a run");
+        assert_eq!(run.word(), "card");
+        assert_eq!(run.len(), 3);
+        assert_eq!(
+            run.keep_one_copy(looped),
+            "If the coach walks away and walks back, they'll see a new number and the same card, \
+             and it will be all good."
+        );
+    }
+
+    /// A person saying a word three times punctuates it, and says it again when
+    /// asked a second time — either check alone keeps this transcript whole.
+    #[test]
+    fn a_word_someone_really_said_three_times_is_kept() {
+        let said = "You don't need to have the words transcribing dot dot dot. You should do it \
+             like in the image here.";
+        assert!(repeated_run("Testing, testing, testing.").is_none());
+        assert_eq!(longest_run_of(said, "dot"), 3);
+        let run = repeated_run(said).expect("an unpunctuated run, until the audio says otherwise");
+        assert!(longest_run_of("the words transcribing dot dot dot.", run.word()) >= run.len());
+    }
+
+    /// Ordinary dictation is full of doubled words; none of them are the
+    /// decoder, and none of them are worth a second decode.
+    #[test]
+    fn a_doubled_word_is_left_alone() {
+        assert!(repeated_run("You mean that that was just like the upper limit").is_none());
+        assert!(repeated_run("whatever small changes you need to to make it").is_none());
+    }
+
+    #[test]
+    fn a_run_split_across_sentences_is_not_a_run() {
+        assert!(repeated_run("No. No. No. That is not what I meant.").is_none());
+    }
+
+    /// The re-decode is a vote on whether the word repeats at all — a real
+    /// "dot dot dot" came back from the shifted audio as two dots, and reading
+    /// that as a count would have trimmed a word that was spoken.
+    #[test]
+    fn a_second_opinion_that_still_repeats_the_word_settles_nothing() {
+        let second = "Then, for controlling, it should be dot dot. Dot at the end.";
+        assert!(longest_run_of(second, "dot") > 1);
+    }
+
+    #[test]
+    fn only_the_extra_copies_go() {
+        let text = "he went ha ha ha ha at that";
+        let run = repeated_run(text).expect("four copies in a row");
+        assert_eq!(run.len(), 4);
+        assert_eq!(run.keep_one_copy(text), "he went ha at that");
     }
 
     #[test]
