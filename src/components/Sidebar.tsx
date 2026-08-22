@@ -1,126 +1,146 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { Cog, FlaskConical, History, Info, Sparkles, Cpu } from "lucide-react";
-import HandyTextLogo from "./icons/HandyTextLogo";
-import HandyHand from "./icons/HandyHand";
-import { useSettings } from "../hooks/useSettings";
 import {
-  GeneralSettings,
-  AdvancedSettings,
-  HistorySettings,
-  DebugSettings,
-  AboutSettings,
-  PostProcessingSettings,
-  ModelsSettings,
-} from "./settings";
+  BookOpen,
+  Cpu,
+  FlaskConical,
+  History,
+  Info,
+  Mic,
+  Settings as SettingsIcon,
+} from "lucide-react";
+import HandyTextLogo from "./icons/HandyTextLogo";
+import UpdateChecker from "./update-checker";
+import { SidebarItem } from "./ui";
+import { useSettings } from "../hooks/useSettings";
 
-export type SidebarSection = keyof typeof SECTIONS_CONFIG;
-
-interface IconProps {
-  width?: number | string;
-  height?: number | string;
-  size?: number | string;
-  className?: string;
-  [key: string]: any;
-}
-
-interface SectionConfig {
-  labelKey: string;
-  icon: React.ComponentType<IconProps>;
-  component: React.ComponentType;
-  enabled: (settings: any) => boolean;
-}
-
-export const SECTIONS_CONFIG = {
-  general: {
-    labelKey: "sidebar.general",
-    icon: HandyHand,
-    component: GeneralSettings,
-    enabled: () => true,
-  },
-  history: {
-    labelKey: "sidebar.history",
-    icon: History,
-    component: HistorySettings,
-    enabled: () => true,
-  },
-  models: {
-    labelKey: "sidebar.models",
-    icon: Cpu,
-    component: ModelsSettings,
-    enabled: () => true,
-  },
-  advanced: {
-    labelKey: "sidebar.advanced",
-    icon: Cog,
-    component: AdvancedSettings,
-    enabled: () => true,
-  },
-  postprocessing: {
-    labelKey: "sidebar.postProcessing",
-    icon: Sparkles,
-    component: PostProcessingSettings,
-    enabled: (settings) => settings?.post_process_enabled ?? false,
-  },
-  debug: {
-    labelKey: "sidebar.debug",
-    icon: FlaskConical,
-    component: DebugSettings,
-    enabled: (settings) => settings?.debug_mode ?? false,
-  },
-  about: {
-    labelKey: "sidebar.about",
-    icon: Info,
-    component: AboutSettings,
-    enabled: () => true,
-  },
-} as const satisfies Record<string, SectionConfig>;
+/** The pages the app sidebar navigates between. Settings is a modal, not a page. */
+export type ShellPage =
+  | "dictation"
+  | "history"
+  | "dictionary"
+  | "models"
+  | "about"
+  | "debug";
 
 interface SidebarProps {
-  activeSection: SidebarSection;
-  onSectionChange: (section: SidebarSection) => void;
+  activePage: ShellPage;
+  onNavigate: (page: ShellPage) => void;
+  onOpenSettings: () => void;
 }
 
+/** Wispr's icons are drawn light; lucide's default stroke reads far heavier. */
+const ICON = { size: 18, strokeWidth: 1.5 } as const;
+
+const NAV: { page: ShellPage; labelKey: string; icon: React.ReactNode }[] = [
+  {
+    page: "dictation",
+    labelKey: "shell.nav.dictation",
+    icon: <Mic {...ICON} />,
+  },
+  {
+    page: "history",
+    labelKey: "shell.nav.history",
+    icon: <History {...ICON} />,
+  },
+  {
+    page: "dictionary",
+    labelKey: "shell.nav.dictionary",
+    icon: <BookOpen {...ICON} />,
+  },
+  { page: "models", labelKey: "shell.nav.models", icon: <Cpu {...ICON} /> },
+];
+
+/**
+ * 216 wide on the cream canvas: wordmark, the four pages, then the utility
+ * group pinned to the bottom. Items are 192x36 inset 12 from each edge and
+ * repeat at a 40 pitch (`SidebarItem` carries the 4px gap).
+ *
+ * Debug only appears once Cmd/Ctrl+Shift+D has switched it on, which is where
+ * the plan leaves it.
+ */
 export const Sidebar: React.FC<SidebarProps> = ({
-  activeSection,
-  onSectionChange,
+  activePage,
+  onNavigate,
+  onOpenSettings,
 }) => {
   const { t } = useTranslation();
   const { settings } = useSettings();
-
-  const availableSections = Object.entries(SECTIONS_CONFIG)
-    .filter(([_, config]) => config.enabled(settings))
-    .map(([id, config]) => ({ id: id as SidebarSection, ...config }));
+  const debugEnabled = settings?.debug_mode ?? false;
 
   return (
-    <div className="flex flex-col w-40 h-full border-e border-mid-gray/20 items-center px-2">
-      <HandyTextLogo width={76} className="m-4" />
-      <div className="flex flex-col w-full items-center gap-1 pt-2 border-t border-mid-gray/20">
-        {availableSections.map((section) => {
-          const Icon = section.icon;
-          const isActive = activeSection === section.id;
-
-          return (
-            <div
-              key={section.id}
-              className={`flex gap-2 items-center p-2 w-full rounded-lg cursor-pointer transition-colors ${
-                isActive
-                  ? "bg-logo-primary/80"
-                  : "hover:bg-mid-gray/20 hover:opacity-100 opacity-85"
-              }`}
-              onClick={() => onSectionChange(section.id)}
-            >
-              <Icon width={24} height={24} className="shrink-0" />
-              <p
-                className="text-sm font-medium truncate"
-                title={t(section.labelKey)}
-              >
-                {t(section.labelKey)}
-              </p>
-            </div>
-          );
-        })}
+    <nav
+      className="flex h-full shrink-0 flex-col"
+      style={{
+        width: "var(--fs-sidebar-w)",
+        paddingInline: "var(--fs-sidebar-inset)",
+        paddingTop: "14px",
+        paddingBottom: "14px",
+        background: "var(--fs-canvas)",
+      }}
+    >
+      <div
+        className="flex shrink-0 items-center gap-[8px]"
+        style={{ height: "28px", paddingInline: "var(--fs-item-px)" }}
+      >
+        <HandyTextLogo width={26} />
+        <span
+          className="truncate"
+          style={{
+            fontFamily: "var(--fs-font-sans)",
+            fontSize: "17px",
+            fontWeight: 600,
+            color: "var(--fs-ink)",
+          }}
+        >
+          {t("shell.appName")}
+        </span>
       </div>
-    </div>
+
+      <div className="mt-[28px] flex flex-col">
+        {NAV.map((item) => (
+          <SidebarItem
+            key={item.page}
+            icon={item.icon}
+            label={t(item.labelKey)}
+            selected={activePage === item.page}
+            onClick={() => onNavigate(item.page)}
+          />
+        ))}
+      </div>
+
+      <div className="mt-auto flex flex-col">
+        {debugEnabled && (
+          <SidebarItem
+            icon={<FlaskConical {...ICON} />}
+            label={t("shell.nav.debug")}
+            selected={activePage === "debug"}
+            onClick={() => onNavigate("debug")}
+          />
+        )}
+        <SidebarItem
+          icon={<SettingsIcon {...ICON} />}
+          label={t("shell.nav.settings")}
+          onClick={onOpenSettings}
+        />
+        <SidebarItem
+          icon={<Info {...ICON} />}
+          label={t("shell.nav.about")}
+          selected={activePage === "about"}
+          onClick={() => onNavigate("about")}
+        />
+        {/* Keeps the update flow reachable now that the footer bar is gone. */}
+        <div
+          className="mt-[8px] flex items-center"
+          style={{
+            paddingInline: "var(--fs-item-px)",
+            fontSize: "var(--fs-text-label)",
+            color: "var(--fs-ink-muted)",
+          }}
+        >
+          <UpdateChecker />
+        </div>
+      </div>
+    </nav>
   );
 };
