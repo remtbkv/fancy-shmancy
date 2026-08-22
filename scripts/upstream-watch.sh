@@ -38,11 +38,15 @@ unreleased="$(git rev-list --no-merges --count "HEAD..upstream/main" 2>/dev/null
   printf -- '- merged into this fork: %s\n' "$merged"
   printf -- '- commits on upstream/main past this fork: %s\n\n' "$unreleased"
   if [ "$merged" = no ]; then
-    printf '## cost of merging %s\n\n```\n' "$latest"
+    printf '## what changed in %s\n\n' "$latest"
+    git log --no-merges --pretty='- %s' "HEAD..$latest" 2>/dev/null || true
+    printf '\n## cost of merging %s\n\n```\n' "$latest"
     bash scripts/sync-upstream.sh plan "$latest" 2>&1
     printf '```\n'
   elif [ "$unreleased" != 0 ]; then
-    printf '## cost of merging upstream/main (unreleased)\n\n```\n'
+    printf '## what changed on upstream/main since the fork\n\n'
+    git log --no-merges --pretty='- %s' HEAD..upstream/main 2>/dev/null || true
+    printf '\n## cost of merging upstream/main (unreleased)\n\n```\n'
     bash scripts/sync-upstream.sh plan upstream/main 2>&1
     printf '```\n'
   fi
