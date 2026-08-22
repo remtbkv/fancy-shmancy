@@ -746,6 +746,15 @@
       "dark": "Dark"
     }
   },
+  "keycap": {
+    "cmd": "Cmd",
+    "opt": "Opt",
+    "shift": "Shift",
+    "ctrl": "Ctrl",
+    "alt": "Alt",
+    "win": "Win",
+    "super": "Super"
+  },
   "overlay": {
     "transcribing": "Transcribing...",
     "processing": "Processing..."

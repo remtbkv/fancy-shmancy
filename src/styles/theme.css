@@ -1,5 +1,25 @@
 /* Handy Colors */
 
+/* Bundled faces for the ported design. Both are OFL 1.1 (texts sit next to the
+   files); see src/assets/fonts/README.md for provenance and subsetting. Each is
+   a single variable file, so a weight range costs one request. */
+@font-face {
+  font-family: "Figtree";
+  src: url("../assets/fonts/figtree-variable.woff2") format("woff2-variations");
+  font-weight: 300 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "EB Garamond";
+  src: url("../assets/fonts/ebgaramond-variable.woff2")
+    format("woff2-variations");
+  font-weight: 400 800;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   /* Palette source of truth. Each themed color is defined once as a
      light/dark pair; the active tokens below and the `data-theme` overrides
@@ -74,4 +94,229 @@
   --color-logo-stroke: var(--dark-color-logo-stroke);
   --color-warning: var(--dark-color-warning);
   --color-error: var(--dark-color-error);
+}
+
+/*
+ * ─── Ported design tokens (`--fs-*`) ────────────────────────────────────────
+ *
+ * Every light value here was pixel-sampled from the four reference
+ * screenshots; the numbers, the method and the residual uncertainties are
+ * written up in ~/handy-review/ui-survey/MEASUREMENTS.md, which is the
+ * authority for anything not stated inline. Screenshots are 2x Retina, so the
+ * px values below are the native measurements halved.
+ *
+ * Structure the tokens encode: three levels of surface (cream canvas → white
+ * card → cream inset), hairlines used only as list dividers, depth carried by
+ * a background shift rather than by shadow, and secondary text as dimmed ink.
+ *
+ * Dark values are NOT measured — the reference is light-mode only. They are
+ * derived from the app's existing dark palette (`--dark-color-*` above) so
+ * dark mode keeps working through the same tokens without inventing a theme
+ * the reference never showed.
+ */
+:root {
+  /* Themed pairs — each hex lives in exactly one place. */
+  --fs-light-canvas: #f5f4f1;
+  --fs-light-card: #fcfcfb;
+  --fs-light-modal: #ffffff;
+  --fs-light-inset: #f5f4f1;
+  --fs-light-ink: #1a1a1a;
+  --fs-light-ink-secondary: #30302f;
+  --fs-light-ink-muted: #71716e;
+  --fs-light-ink-label: #4e4a42;
+  --fs-light-hairline: #efebe3;
+  --fs-light-hairline-soft: #eeece4;
+  --fs-light-quiet: #efebe3;
+  /* quiet-hover and row-hover: only one hover state is visible in the
+     reference (a history row at #f8f7f4 on #fcfcfb, ~1.5% darker), so the
+     rest follow that same relationship rather than being measured. */
+  --fs-light-quiet-hover: #e8e3d8;
+  --fs-light-row-hover: #f8f7f4;
+  --fs-light-toggle-off: #c5c0b4;
+  --fs-light-toggle-knob: #ffffff;
+
+  --fs-dark-canvas: var(--dark-color-background);
+  --fs-dark-card: color-mix(in srgb, var(--dark-color-background), white 5%);
+  --fs-dark-modal: color-mix(in srgb, var(--dark-color-background), white 8%);
+  --fs-dark-inset: color-mix(in srgb, var(--dark-color-background), black 20%);
+  --fs-dark-ink: var(--dark-color-text);
+  --fs-dark-ink-secondary: color-mix(
+    in srgb,
+    var(--dark-color-text),
+    transparent 20%
+  );
+  --fs-dark-ink-muted: color-mix(
+    in srgb,
+    var(--dark-color-text),
+    transparent 45%
+  );
+  --fs-dark-ink-label: color-mix(
+    in srgb,
+    var(--dark-color-text),
+    transparent 40%
+  );
+  --fs-dark-hairline: color-mix(
+    in srgb,
+    var(--dark-color-text),
+    transparent 88%
+  );
+  --fs-dark-hairline-soft: color-mix(
+    in srgb,
+    var(--dark-color-text),
+    transparent 92%
+  );
+  --fs-dark-quiet: color-mix(in srgb, var(--dark-color-text), transparent 90%);
+  --fs-dark-quiet-hover: color-mix(
+    in srgb,
+    var(--dark-color-text),
+    transparent 84%
+  );
+  --fs-dark-row-hover: color-mix(
+    in srgb,
+    var(--dark-color-text),
+    transparent 95%
+  );
+  --fs-dark-toggle-off: color-mix(
+    in srgb,
+    var(--dark-color-text),
+    transparent 72%
+  );
+  --fs-dark-toggle-knob: var(--dark-color-background);
+
+  /* Accents are used as measured in both themes — the orange shortcut pill,
+     the red badge, the lavender quota card and the chart teal are the
+     reference's palette and are not re-tinted for dark mode. */
+  --fs-keycap: #ffa946;
+  --fs-keycap-border: #1a1a1a;
+  --fs-badge: #ee6a6a;
+  --fs-badge-ink: #ffffff;
+  --fs-quota: #fbf2ff;
+  --fs-quota-border: #f4e1ff;
+  --fs-accent: #195c5d;
+  /* Derived: identical points read #f5f4f1 → #b3b2b0 and #fcfcfb → #b8b8b7
+     between the un-scrimmed and scrimmed screenshots, a uniform x0.730. */
+  --fs-scrim: rgba(0, 0, 0, 0.27);
+
+  /* Type. Figtree covers latin + latin-ext only, so the Cyrillic and CJK
+     locales fall through to system-ui exactly as they do today; the same
+     fallback supplies the modifier-key glyphs (⌘ ⌥ ⇧ ⌃), which neither
+     bundled face contains. */
+  --fs-font-sans: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --fs-font-serif: "EB Garamond", ui-serif, Georgia, serif;
+
+  --fs-text-title-serif: 28px; /* settings-modal page titles */
+  --fs-text-title: 24px; /* main-window page titles, greeting */
+  --fs-text-body: 15px; /* row titles + subtitles, controls, nav */
+  --fs-text-meta: 13px; /* history timestamps */
+  --fs-text-label: 12px; /* eyebrow labels, version line */
+  --fs-tracking-label: 0.08em;
+
+  /* Radii */
+  --fs-radius-card: 24px;
+  --fs-radius-panel: 16px; /* bordered side panels; noisiest fit, ~16 +/-1 */
+  --fs-radius-inset: 12px;
+  --fs-radius-modal: 12px;
+  --fs-radius-pill: 8px;
+  --fs-radius-item: 6px;
+
+  /* Metrics */
+  --fs-sidebar-w: 216px;
+  --fs-sidebar-inset: 12px;
+  --fs-item-h: 36px;
+  --fs-item-px: 8px;
+  --fs-item-gap: 8px;
+  --fs-item-icon: 20px;
+  --fs-modal-w: 960px;
+  --fs-modal-h: 640px;
+  --fs-modal-sidebar-w: 208px;
+  --fs-modal-px: 48px;
+  --fs-card-px: 40px;
+  --fs-panel-px: 24px;
+  --fs-row-h: 65px; /* single-line SettingRow, + 1px divider = 66 pitch */
+  --fs-row-h-stacked: 86px; /* title + value, + 1px divider = 87 pitch */
+  --fs-row-px: 20px;
+  --fs-control-h: 36px;
+  --fs-toggle-w: 42px;
+  --fs-toggle-h: 25px;
+  --fs-toggle-knob: 21px;
+  --fs-badge-size: 18px;
+
+  /* Motion — MOTION.md, measured frame-by-frame off Rem's screen recording.
+     Enter fast, exit faster, never animate layout. */
+  --fs-enter: 80ms;
+  --fs-exit: 30ms;
+
+  /* Active set — light by default, following the OS, overridden by
+     `data-theme` exactly like the palette above. */
+  --fs-canvas: var(--fs-light-canvas);
+  --fs-card: var(--fs-light-card);
+  --fs-modal: var(--fs-light-modal);
+  --fs-inset: var(--fs-light-inset);
+  --fs-ink: var(--fs-light-ink);
+  --fs-ink-secondary: var(--fs-light-ink-secondary);
+  --fs-ink-muted: var(--fs-light-ink-muted);
+  --fs-ink-label: var(--fs-light-ink-label);
+  --fs-hairline: var(--fs-light-hairline);
+  --fs-hairline-soft: var(--fs-light-hairline-soft);
+  --fs-quiet: var(--fs-light-quiet);
+  --fs-quiet-hover: var(--fs-light-quiet-hover);
+  --fs-row-hover: var(--fs-light-row-hover);
+  --fs-toggle-off: var(--fs-light-toggle-off);
+  --fs-toggle-knob-fill: var(--fs-light-toggle-knob);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fs-canvas: var(--fs-dark-canvas);
+    --fs-card: var(--fs-dark-card);
+    --fs-modal: var(--fs-dark-modal);
+    --fs-inset: var(--fs-dark-inset);
+    --fs-ink: var(--fs-dark-ink);
+    --fs-ink-secondary: var(--fs-dark-ink-secondary);
+    --fs-ink-muted: var(--fs-dark-ink-muted);
+    --fs-ink-label: var(--fs-dark-ink-label);
+    --fs-hairline: var(--fs-dark-hairline);
+    --fs-hairline-soft: var(--fs-dark-hairline-soft);
+    --fs-quiet: var(--fs-dark-quiet);
+    --fs-quiet-hover: var(--fs-dark-quiet-hover);
+    --fs-row-hover: var(--fs-dark-row-hover);
+    --fs-toggle-off: var(--fs-dark-toggle-off);
+    --fs-toggle-knob-fill: var(--fs-dark-toggle-knob);
+  }
+}
+
+:root[data-theme="light"] {
+  --fs-canvas: var(--fs-light-canvas);
+  --fs-card: var(--fs-light-card);
+  --fs-modal: var(--fs-light-modal);
+  --fs-inset: var(--fs-light-inset);
+  --fs-ink: var(--fs-light-ink);
+  --fs-ink-secondary: var(--fs-light-ink-secondary);
+  --fs-ink-muted: var(--fs-light-ink-muted);
+  --fs-ink-label: var(--fs-light-ink-label);
+  --fs-hairline: var(--fs-light-hairline);
+  --fs-hairline-soft: var(--fs-light-hairline-soft);
+  --fs-quiet: var(--fs-light-quiet);
+  --fs-quiet-hover: var(--fs-light-quiet-hover);
+  --fs-row-hover: var(--fs-light-row-hover);
+  --fs-toggle-off: var(--fs-light-toggle-off);
+  --fs-toggle-knob-fill: var(--fs-light-toggle-knob);
+}
+
+:root[data-theme="dark"] {
+  --fs-canvas: var(--fs-dark-canvas);
+  --fs-card: var(--fs-dark-card);
+  --fs-modal: var(--fs-dark-modal);
+  --fs-inset: var(--fs-dark-inset);
+  --fs-ink: var(--fs-dark-ink);
+  --fs-ink-secondary: var(--fs-dark-ink-secondary);
+  --fs-ink-muted: var(--fs-dark-ink-muted);
+  --fs-ink-label: var(--fs-dark-ink-label);
+  --fs-hairline: var(--fs-dark-hairline);
+  --fs-hairline-soft: var(--fs-dark-hairline-soft);
+  --fs-quiet: var(--fs-dark-quiet);
+  --fs-quiet-hover: var(--fs-dark-quiet-hover);
+  --fs-row-hover: var(--fs-dark-row-hover);
+  --fs-toggle-off: var(--fs-dark-toggle-off);
+  --fs-toggle-knob-fill: var(--fs-dark-toggle-knob);
 }
