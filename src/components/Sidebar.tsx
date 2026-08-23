@@ -4,7 +4,6 @@ import {
   BookOpen,
   Cpu,
   FlaskConical,
-  History,
   Info,
   Mic,
   Settings as SettingsIcon,
@@ -14,10 +13,12 @@ import UpdateChecker from "./update-checker";
 import { SidebarItem } from "./ui";
 import { useSettings } from "../hooks/useSettings";
 
-/** The pages the app sidebar navigates between. Settings is a modal, not a page. */
+/**
+ * The pages the app sidebar navigates between. Settings is a modal, not a page,
+ * and history is not a page either — the dictation page *is* the history.
+ */
 export type ShellPage =
   | "dictation"
-  | "history"
   | "dictionary"
   | "models"
   | "about"
@@ -37,11 +38,6 @@ const NAV: { page: ShellPage; labelKey: string; icon: React.ReactNode }[] = [
     page: "dictation",
     labelKey: "shell.nav.dictation",
     icon: <Mic {...ICON} />,
-  },
-  {
-    page: "history",
-    labelKey: "shell.nav.history",
-    icon: <History {...ICON} />,
   },
   {
     page: "dictionary",
@@ -74,22 +70,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
       style={{
         width: "var(--fs-sidebar-w)",
         paddingInline: "var(--fs-sidebar-inset)",
-        paddingTop: "14px",
+        // The wordmark clears the traffic lights, which puts the first nav item
+        // at the measured 123 css below the window top (14 + 53 + the 28px
+        // wordmark row + the 28px gap under it).
+        paddingTop: "calc(var(--fs-titlebar-h) + 14px)",
         paddingBottom: "14px",
         background: "var(--fs-canvas)",
       }}
     >
+      {/* The lockup is the mark, not a bullet beside a word: 67 held up in a
+          pair of hands, at 84 across, with the name set under it. The reference
+          puts a small glyph next to its wordmark, but its glyph is a logotype
+          and ours is a joke — it only works at a size you can read it at. */}
       <div
-        className="flex shrink-0 items-center gap-[8px]"
-        style={{ height: "28px", paddingInline: "var(--fs-item-px)" }}
+        className="flex shrink-0 flex-col items-start"
+        style={{ paddingInline: "var(--fs-item-px)" }}
       >
-        <HandyTextLogo width={26} />
+        <HandyTextLogo width={84} className="-ms-[4px]" />
         <span
-          className="truncate"
+          className="mt-[8px] truncate"
           style={{
             fontFamily: "var(--fs-font-sans)",
-            fontSize: "17px",
+            fontSize: "20px",
             fontWeight: 600,
+            letterSpacing: "-0.01em",
             color: "var(--fs-ink)",
           }}
         >
@@ -129,9 +133,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
           selected={activePage === "about"}
           onClick={() => onNavigate("about")}
         />
-        {/* Keeps the update flow reachable now that the footer bar is gone. */}
+        {/* Keeps the update flow reachable now that the footer bar is gone.
+            `empty:hidden` because UpdateChecker renders nothing when there is
+            no update to report — a permanent line at the sidebar's foot is
+            chrome that never changes and so says nothing. */}
         <div
-          className="mt-[8px] flex items-center"
+          className="mt-[8px] flex items-center empty:hidden"
           style={{
             paddingInline: "var(--fs-item-px)",
             fontSize: "var(--fs-text-label)",
