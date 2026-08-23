@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { commands } from "@/bindings";
-import { PillButton, SettingRow } from "@/components/ui";
+import { MiddleTruncate, PillButton, SettingRow } from "@/components/ui";
 import { useSettings } from "@/hooks/useSettings";
 import { NumberField } from "./controls";
 import { GroupCard } from "./rows";
@@ -109,9 +109,9 @@ export const StoragePage: React.FC = () => {
         </SettingRow>
         <SettingRow
           title={t("settings.debug.recordingsFolder.title")}
-          subtitle={dir}
+          subtitle={<MiddleTruncate text={dir} />}
         >
-          <div className="flex items-center gap-[8px]">
+          <div className="flex shrink-0 items-center gap-[8px]">
             <PillButton onClick={() => void chooseDir()}>
               {t("settings.modal.rows.change")}
             </PillButton>

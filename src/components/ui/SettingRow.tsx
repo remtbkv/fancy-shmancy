@@ -5,9 +5,10 @@ interface SettingRowProps {
   /**
    * The setting's CURRENT VALUE, shown under the title — "Built-in mic
    * (recommended)", "English". Its presence is what makes the row the taller
-   * two-line variant.
+   * two-line variant. A node may be passed for values that need their own
+   * shrink behaviour (see `MiddleTruncate` for paths).
    */
-  subtitle?: string;
+  subtitle?: React.ReactNode;
   /** Right-aligned control: a Toggle, a PillButton, a Select. */
   children?: React.ReactNode;
   badge?: number;
@@ -48,8 +49,9 @@ export const SettingRow: React.FC<SettingRowProps> = ({
     }}
   >
     <div className="min-w-0">
-      <div className="flex items-center gap-[8px]">
+      <div className="flex min-w-0 items-center gap-[8px]">
         <span
+          className="truncate"
           style={{
             fontSize: "var(--fs-text-body)",
             fontWeight: 600,
@@ -76,7 +78,8 @@ export const SettingRow: React.FC<SettingRowProps> = ({
       </div>
       {subtitle && (
         <div
-          className="truncate"
+          // A string value ellipsizes at its end; a node brings its own rule.
+          className={typeof subtitle === "string" ? "truncate" : "min-w-0"}
           style={{
             fontSize: "var(--fs-text-body)",
             fontWeight: 400,

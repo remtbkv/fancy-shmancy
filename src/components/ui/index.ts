@@ -16,3 +16,4 @@ export { PillButton } from "./PillButton";
 export { Toggle } from "./Toggle";
 export { SectionLabel } from "./SectionLabel";
 export { KeycapPill } from "./KeycapPill";
+export { MiddleTruncate } from "./MiddleTruncate";
