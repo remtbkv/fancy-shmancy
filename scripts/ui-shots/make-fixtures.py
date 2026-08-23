@@ -105,9 +105,11 @@ def with_edge_cases(entries: list) -> list:
 
 
 def load_models() -> list:
-    """The catalog, rendered the way the backend renders it, plus a downloaded
-    alternate quant of the top recommendation — the exact pair that used to show
-    up twice."""
+    """The catalog, rendered the way the backend renders it, with two of the
+    three recommended models already held — which is Rem's actual state and the
+    one that exercises both curation rules at once: an alternate quant of the
+    top pick must not be re-offered underneath itself, and a held model must
+    drop out of the download list, leaving exactly the third."""
     catalog = json.load(
         open(
             pathlib.Path(__file__).parents[2]
@@ -155,9 +157,12 @@ def load_models() -> list:
             }
         )
 
-    # The alternate-quant twin: same repo, different file, already on disk.
-    top = next((m for m in models if m["is_recommended"]), None)
-    if top:
+    recommended = [m for m in models if m["is_recommended"]]
+
+    # The alternate-quant twin of the top pick: same repo, different file,
+    # already on disk. This is the pair that used to show up twice.
+    if recommended:
+        top = recommended[0]
         held = dict(top)
         held["id"] = top["id"].replace(".gguf", "-Q8_0.gguf")
         held["filename"] = top["filename"].replace(".gguf", "-Q8_0.gguf")
@@ -166,6 +171,11 @@ def load_models() -> list:
         held["is_recommended"] = False
         held["size_mb"] = int(top["size_mb"] * 1.4)
         models.insert(0, held)
+
+    # The second pick, held at its own default quant.
+    if len(recommended) > 1:
+        recommended[1]["is_downloaded"] = True
+
     return models
 
 

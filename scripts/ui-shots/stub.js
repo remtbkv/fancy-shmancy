@@ -4,10 +4,12 @@
  * every screen can be rendered and measured in a browser — no app launch, no
  * window on anyone's screen.
  *
- * Injected by shoot.mjs via addInitScript with (fixtures, theme) bound in.
+ * Injected by shoot.mjs via addInitScript with the fixtures bound in.
  */
-export function installTauriStub(fixtures, theme) {
-  const settings = { ...fixtures.settings, theme };
+export function installTauriStub(fixtures) {
+  // Verbatim, including the retired values Rem's real store still carries
+  // (`overlay_style: "minimal"`): what the UI does with those is the point.
+  const settings = { ...fixtures.settings };
   const listeners = new Map(); // event name -> Set of callback ids
   const callbacks = new Map(); // callback id -> fn
   let nextId = 1;
@@ -51,7 +53,12 @@ export function installTauriStub(fixtures, theme) {
       });
     },
     get_recording_storage_usage: () => ok(fixtures.storage),
-    get_recordings_dir: () => ok("/Users/you/Library/.../recordings"),
+    // Deliberately long: the real default is a deep Application Support path,
+    // and this row is where a path pushed its buttons off the card.
+    get_recordings_dir: () =>
+      ok(
+        "/Users/you/Library/Application Support/computer.handy.fancy-shmancy/recordings",
+      ),
     get_audio_file_path: () => ok(""),
 
     // --- models ----------------------------------------------------------
