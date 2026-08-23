@@ -13,6 +13,11 @@ async changeBinding(id: string, binding: string) : Promise<Result<BindingRespons
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Replace the whole shortcut list for an action. The first entry becomes the
+ * primary shortcut and the rest become alternates; an empty list unbinds the
+ * action.
+ */
 async setBindingShortcuts(id: string, shortcuts: string[]) : Promise<Result<BindingResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("set_binding_shortcuts", { id, shortcuts }) };
@@ -61,6 +66,14 @@ async changeEditingCancelGraceMsSetting(ms: number) : Promise<Result<null, strin
     else return { status: "error", error: e  as any };
 }
 },
+async changePasteLastTranscriptWindowSetting(seconds: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_paste_last_transcript_window_setting", { seconds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async updateTypedOutApps(apps: string[]) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("update_typed_out_apps", { apps }) };
@@ -69,16 +82,12 @@ async updateTypedOutApps(apps: string[]) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * The app the last transcript was typed into. Bundle identifiers are not
+ * something anyone knows by heart, so the settings UI offers this one.
+ */
 async getLastPasteTarget() : Promise<string | null> {
     return await TAURI_INVOKE("get_last_paste_target");
-},
-async changePasteLastTranscriptWindowSetting(seconds: number) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_paste_last_transcript_window_setting", { seconds }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
 },
 async changeAudioFeedbackSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
@@ -915,6 +924,11 @@ async getAudioFilePath(fileName: string) : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Length of a recording, read from the WAV header. The history list used to
+ * get this by loading the audio itself, which made every entry a media target
+ * the play key could hijack.
+ */
 async getAudioDurationSecs(fileName: string) : Promise<Result<number | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_audio_duration_secs", { fileName }) };
@@ -955,6 +969,12 @@ async updateRecordingRetentionPeriod(period: string) : Promise<Result<null, stri
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * What the recordings folder costs right now, and what an hour of dictation
+ * adds to it. The second figure is measured from the audio actually kept, not
+ * assumed from the sample format, so it reflects what this user's speech
+ * really costs after silence has been filtered out.
+ */
 async getRecordingStorageUsage() : Promise<Result<RecordingStorageUsage, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_recording_storage_usage") };
@@ -971,6 +991,10 @@ async updateRecordingStorageLimit(limitGb: number) : Promise<Result<null, string
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * The folder recordings are written to right now, so the settings screen can
+ * show it rather than describing it.
+ */
 async getRecordingsDir() : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_recordings_dir") };
@@ -979,6 +1003,11 @@ async getRecordingsDir() : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Choose where recordings go. An empty string restores the default. Existing
+ * recordings stay where they are — moving a user's audio without being asked
+ * is not a thing a settings toggle should do.
+ */
 async setRecordingsDir(dir: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("set_recordings_dir", { dir }) };
@@ -1040,7 +1069,41 @@ settings_schema_version?: number;
  * Defaults to empty on partial stores; the load path merges in the
  * default bindings for any missing keys before the settings are used.
  */
-bindings?: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk?: boolean; ptt_double_tap_lock?: boolean; cancel_on_editing_keys?: boolean; editing_cancel_keys?: string[]; editing_cancel_grace_ms?: number; paste_last_transcript_window_secs?: number; typed_out_apps?: string[]; audio_feedback?: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; show_whats_new_on_update?: boolean; 
+bindings?: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk?: boolean; 
+/**
+ * Push-to-talk only: double-tapping the transcribe shortcut latches
+ * recording on until the shortcut is pressed again.
+ */
+ptt_double_tap_lock?: boolean; 
+/**
+ * Throw the recording away when an editing key is pressed while the
+ * transcribe shortcut is held. A held modifier that doubles as the
+ * shortcut (right Option, say) is also half of Option+Delete and
+ * Option+Arrow, and those presses mean text editing, not dictation.
+ */
+cancel_on_editing_keys?: boolean; 
+/**
+ * Keys that abandon the recording while `cancel_on_editing_keys` is on,
+ * in handy-keys names (`backspace`, `left`, …).
+ */
+editing_cancel_keys?: string[]; 
+/**
+ * How long after the shortcut goes down an editing key still counts as
+ * "this was never dictation": inside this window the cancel is silent and
+ * the overlay never appears, so Option+Delete leaves no trace on screen.
+ */
+editing_cancel_grace_ms?: number; 
+/**
+ * How recent the last transcript must be for the paste-last-transcript
+ * shortcut to paste it instead of passing a normal paste through.
+ */
+paste_last_transcript_window_secs?: number; 
+/**
+ * Bundle identifiers of apps that get the transcript typed out instead of
+ * dropped in one go, because a large paste there collapses into an
+ * attachment rather than staying text.
+ */
+typed_out_apps?: string[]; audio_feedback?: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; show_whats_new_on_update?: boolean; 
 /**
  * The app version whose What's New the user has already seen. Fresh installs
  * default to the current version (nothing is "new" to them). Existing users
@@ -1052,19 +1115,33 @@ whats_new_last_seen_version?: string; selected_model?: string; onboarding_comple
  * Which input channel to use on the selected microphone device.
  * None means "average all channels" (original behavior).
  */
-selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; recording_storage_limit_gb?: number; recordings_dir?: string | null; flow_span_init_db?: number; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; pause_playback_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; 
+selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; recording_storage_limit_gb?: number; 
+/**
+ * Starting span for the flow bar, in dB, derived from this machine's own
+ * recordings. The live span learns within a second or two; this is only
+ * where it begins, and a value that suits one voice and room suits nobody
+ * else's.
+ */
+flow_span_init_db?: number; 
+/**
+ * Where recordings are written. `None` keeps them beside the app's other
+ * data; a path puts them wherever the user would rather have them — an
+ * external disk, a synced folder, somewhere they can find without knowing
+ * what a bundle identifier is.
+ */
+recordings_dir?: string | null; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; pause_playback_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; 
 /**
  * Debug-gated ("beta") receipt-sequenced paste: restore the clipboard only
  * after the target app actually reads the transcript, instead of after a
  * fixed delay. See `paste_tx`. macOS and Windows only.
  */
-reliable_paste?: boolean; typing_tool?: TypingTool; external_script_path?: string | null; filler_word_removal_enabled?: boolean; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting;
+reliable_paste?: boolean; typing_tool?: TypingTool; external_script_path?: string | null; filler_word_removal_enabled?: boolean; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; 
 /**
  * Stable transcribe.cpp device selector. This is derived from the backend's
  * `device_id` when available (or its name for backends such as Metal),
  * never from the process-local device registry index.
  */
-transcribe_gpu_device?: string | null; extra_recording_buffer_ms?: number; vad_enabled?: boolean;
+transcribe_gpu_device?: string | null; extra_recording_buffer_ms?: number; vad_enabled?: boolean; 
 /**
  * Which recording overlay to show: None / Minimal / Live. Streaming mode is
  * not gated on this — that follows model capability. Migrated from the old
@@ -1144,12 +1221,28 @@ export type OverlayPosition = "top" | "bottom"
  * streaming mode (that is driven purely by model capability).
  */
 export type OverlayStyle = "none" | "minimal" | "live"
-export type RecordingStorageUsage = { bytes_used: number; bytes_per_hour: number; hours_recorded: number }
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
-export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3" | "storage_limit"
+export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3" | 
+/**
+ * Keep every recording until the folder reaches a size the user picked.
+ * Age is the wrong axis for dictation: a month-old take is no less useful
+ * than yesterday's, and what actually runs out is disk.
+ */
+"storage_limit"
+/**
+ * What the kept audio costs, for a settings screen that has to make a storage
+ * cap mean something.
+ */
+export type RecordingStorageUsage = { bytes_used: number; bytes_per_hour: number; hours_recorded: number;
+/**
+ * How many transcripts the history holds. Counted from the database rather
+ * than the recordings folder, so it stays the number of things the user can
+ * actually see in the list after retention has swept the audio.
+ */
+entry_count: number }
 export type SecretMap = Partial<{ [key in string]: string }>
 export type SecureInputStatus = { 
 /**
@@ -1183,13 +1276,13 @@ uncovered_bindings: string[];
  * warning banner appears and explains why recording refused.
  */
 recorder_blocked: boolean }
-export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string;
+export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string; 
 /**
  * Further shortcuts that trigger the same action, so one action can be
  * reached from a key and, say, a mouse side button. Stores written before
  * this field existed deserialize with an empty list.
  */
-extra_bindings: string[] }
+extra_bindings?: string[] }
 export type SoundTheme = "marimba" | "pop" | "custom"
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.

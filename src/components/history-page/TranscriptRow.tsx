@@ -123,7 +123,10 @@ export const TranscriptRow: React.FC<TranscriptRowProps> = ({
     <div
       className="group relative flex items-center hover:bg-[var(--fs-row-hover)]"
       style={{
-        height: "52px",
+        // 52 of row plus the divider: border-box would otherwise take the
+        // hairline out of the 52 and give a 52 pitch where the reference
+        // measures 53 (fills of 104 native at a pitch of 106).
+        height: "53px",
         paddingInline: "16px",
         borderTop: "1px solid var(--fs-hairline-soft)",
       }}

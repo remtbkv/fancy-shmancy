@@ -260,7 +260,9 @@
         "label": "Rescan",
         "tooltip": "Rescan for models added to the models folder or Hugging Face cache outside Fancy Shmancy"
       },
-      "noModelsMatch": "No models match this filter."
+      "noModelsMatch": "No models match this filter.",
+      "availableRecommended": "Recommended",
+      "searchForMore": "Search to see every model."
     },
     "sound": {
       "title": "Sound",
@@ -695,10 +697,9 @@
         "interface": "Interface",
         "appSettings": "App settings",
         "updates": "Updates",
-        "acceleration": "Acceleration",
-        "listening": "Listening",
         "recordings": "Recordings",
-        "postProcessing": "Post-processing"
+        "postProcessing": "Post-processing",
+        "modelsPerformance": "Models and performance"
       },
       "rows": {
         "dictationLanguage": "Dictation Language",
@@ -742,7 +743,6 @@
     "checkingUpdates": "Checking for updates...",
     "updateAvailableShort": "Update available",
     "upToDate": "Up to date",
-    "updateCheckingDisabled": "Synced weekly from upstream",
     "downloading": "Downloading... {{progress}}%",
     "installing": "Installing...",
     "preparing": "Preparing...",
@@ -828,7 +828,6 @@
     "appName": "Fancy Shmancy",
     "nav": {
       "dictation": "Dictation",
-      "history": "History",
       "dictionary": "Dictionary",
       "models": "Models",
       "settings": "Settings",
@@ -836,15 +835,12 @@
       "debug": "Debug"
     },
     "home": {
-      "greeting": "Get back into the flow with",
-      "greetingNoShortcut": "Set a shortcut to start dictating.",
-      "empty": "Your transcripts will show up here."
+      "empty": "Your transcripts will show up here.",
+      "stats_one": "{{count}} recording · {{hours}} h dictated · {{size}}",
+      "stats_other": "{{count}} recordings · {{hours}} h dictated · {{size}}"
     },
     "history": {
-      "title": "History",
       "search": "Search transcripts",
-      "loading": "Loading…",
-      "empty": "No transcripts yet.",
       "noResults": "Nothing matches that search."
     },
     "dictionary": {

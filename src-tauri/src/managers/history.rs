@@ -43,6 +43,10 @@ pub struct RecordingStorageUsage {
     pub bytes_used: f64,
     pub bytes_per_hour: f64,
     pub hours_recorded: f64,
+    /// How many transcripts the history holds. Counted from the database rather
+    /// than the recordings folder, so it stays the number of things the user can
+    /// actually see in the list after retention has swept the audio.
+    pub entry_count: i64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
@@ -623,6 +627,14 @@ impl HistoryManager {
 
     /// Seconds of audio across every kept recording, read from the WAV headers
     /// so it costs a stat per file rather than a decode.
+    /// How many transcripts the history holds.
+    pub fn entry_count(&self) -> Result<i64> {
+        let conn = self.get_connection()?;
+        Ok(conn.query_row("SELECT COUNT(*) FROM transcription_history", [], |row| {
+            row.get(0)
+        })?)
+    }
+
     pub fn total_recorded_seconds(&self) -> Result<f64> {
         let Ok(entries) = fs::read_dir(&self.recordings_dir) else {
             return Ok(0.0);

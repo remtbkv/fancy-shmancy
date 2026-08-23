@@ -15,7 +15,6 @@ import Onboarding, { AccessibilityOnboarding } from "./components/onboarding";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Sidebar, ShellPage } from "./components/Sidebar";
 import { HomePage, PageShell } from "./components/home";
-import { HistoryPage } from "./components/history-page";
 import { DictionaryPage } from "./components/dictionary";
 import {
   AboutSettings,
@@ -300,8 +299,6 @@ function App() {
   // layout inside the shared page chrome; the port restyles them in place.
   const renderPage = () => {
     switch (currentPage) {
-      case "history":
-        return <HistoryPage />;
       case "dictionary":
         return <DictionaryPage />;
       case "models":
@@ -357,8 +354,9 @@ function App() {
           onNavigate={setCurrentPage}
           onOpenSettings={() => setSettingsOpen(true)}
         />
-        {/* The one content card: flush to the sidebar, 8 off the other edges. */}
-        <main className="min-w-0 flex-1 pb-[8px] pe-[8px]">
+        {/* The one content card: flush to the sidebar, 8 off the other edges,
+            below the 53px band the traffic lights sit in. */}
+        <main className="min-w-0 flex-1 pt-[var(--fs-titlebar-h)] pb-[8px] pe-[8px]">
           <SoftCard className="flex h-full flex-col">
             <AccessibilityPermissions />
             <SecureInputWarning />

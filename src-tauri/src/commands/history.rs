@@ -197,6 +197,7 @@ pub async fn get_recording_storage_usage(
         bytes_used: bytes as f64,
         bytes_per_hour,
         hours_recorded: seconds / 3600.0,
+        entry_count: history_manager.entry_count().unwrap_or(0),
     })
 }
 
