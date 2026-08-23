@@ -630,9 +630,11 @@ impl HistoryManager {
     /// How many transcripts the history holds.
     pub fn entry_count(&self) -> Result<i64> {
         let conn = self.get_connection()?;
-        Ok(conn.query_row("SELECT COUNT(*) FROM transcription_history", [], |row| {
-            row.get(0)
-        })?)
+        Ok(
+            conn.query_row("SELECT COUNT(*) FROM transcription_history", [], |row| {
+                row.get(0)
+            })?,
+        )
     }
 
     pub fn total_recorded_seconds(&self) -> Result<f64> {
