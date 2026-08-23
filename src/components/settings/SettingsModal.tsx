@@ -1,26 +1,14 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getVersion } from "@tauri-apps/api/app";
-import {
-  Cpu,
-  HardDrive,
-  Monitor,
-  SlidersHorizontal,
-  Wrench,
-} from "lucide-react";
+import { HardDrive, Monitor, SlidersHorizontal, Wrench } from "lucide-react";
 import { SectionLabel, SidebarItem } from "@/components/ui";
 import { AdvancedPage } from "./modal/AdvancedPage";
 import { GeneralPage } from "./modal/GeneralPage";
-import { ModelsPage } from "./modal/ModelsPage";
 import { StoragePage } from "./modal/StoragePage";
 import { SystemPage } from "./modal/SystemPage";
 
-export type SettingsPage =
-  | "general"
-  | "system"
-  | "models"
-  | "storage"
-  | "advanced";
+export type SettingsPage = "general" | "system" | "storage" | "advanced";
 
 export interface SettingsModalProps {
   open: boolean;
@@ -47,12 +35,6 @@ const PAGES: {
     Component: SystemPage,
   },
   {
-    id: "models",
-    titleKey: "sidebar.models",
-    icon: <Cpu size={18} aria-hidden />,
-    Component: ModelsPage,
-  },
-  {
     id: "storage",
     titleKey: "settings.modal.pages.storage",
     icon: <HardDrive size={18} aria-hidden />,
@@ -74,10 +56,13 @@ const PAGES: {
  * app version pinned 21px above the sheet's bottom edge, and a 48px content
  * pane whose page title is the one place the serif is used.
  *
- * Motion follows MOTION.md exactly: scrim and sheet fade in together over
- * 80ms with a 0.98 -> 1.00 scale and their content already laid out; on close
- * the sheet is removed at once and only the scrim fades, over 30ms. Nothing
- * slides, and a page swap is an instant content replacement.
+ * Motion keeps MOTION.md's grammar — scrim and sheet arrive together with
+ * their content already laid out, nothing slides, a page swap is an instant
+ * replacement, and dismissal is far quicker than arrival — but the enter runs
+ * at `--fs-enter-surface` on a real deceleration curve rather than the 80ms
+ * measured off the reference, because at 80ms the scale never registers and
+ * the sheet reads as popping. On close the sheet is removed at once and only
+ * the scrim fades, over `--fs-exit`.
  */
 const SettingsModal: React.FC<SettingsModalProps> = ({
   open,
@@ -88,7 +73,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   const [page, setPage] = useState<SettingsPage>(initialPage);
   const [version, setVersion] = useState("");
   // `mounted` outlives `open` by the exit fade; `shown` drives the transition
-  // itself, one frame after mount so the browser has a state to animate from.
+  // itself, once the browser has actually painted a state to animate from.
   const [mounted, setMounted] = useState(open);
   const [shown, setShown] = useState(false);
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -107,8 +92,19 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   useEffect(() => {
     if (open) {
       setMounted(true);
-      const frame = requestAnimationFrame(() => setShown(true));
-      return () => cancelAnimationFrame(frame);
+      // Two frames, not one. A single rAF callback can land in the same frame
+      // that first paints the sheet, so the browser never sees the opacity-0 /
+      // scale-0.98 state as a start value and skips the transition outright —
+      // which is the abruptness, not the duration. Waiting for the frame after
+      // the paint guarantees there is something to animate from.
+      let inner = 0;
+      const outer = requestAnimationFrame(() => {
+        inner = requestAnimationFrame(() => setShown(true));
+      });
+      return () => {
+        cancelAnimationFrame(outer);
+        cancelAnimationFrame(inner);
+      };
     }
     setShown(false);
     const timer = setTimeout(() => setMounted(false), 30);
@@ -143,8 +139,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
           background: "var(--fs-scrim)",
           opacity: shown ? 1 : 0,
           transitionProperty: "opacity",
-          transitionTimingFunction: "ease-out",
-          transitionDuration: shown ? "var(--fs-enter)" : "var(--fs-exit)",
+          transitionTimingFunction: "var(--fs-ease-out)",
+          transitionDuration: shown
+            ? "var(--fs-enter-surface)"
+            : "var(--fs-exit)",
         }}
       />
 
@@ -167,16 +165,23 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             // scrimmed backdrop — see MEASUREMENTS.md, which labels it approximate.
             boxShadow: "0 8px 40px rgba(0, 0, 0, 0.10)",
             opacity: shown ? 1 : 0,
-            transform: shown ? "scale(1)" : "scale(0.98)",
+            // 0.965 rather than the reference's 0.98: over a 155ms travel a 2%
+            // scale is still too small to read as movement, and 3.5% on a
+            // 960px sheet is 34px of width — visible, and nowhere near a zoom.
+            transform: shown ? "scale(1)" : "scale(0.965)",
             transitionProperty: "opacity, transform",
-            transitionTimingFunction: "ease-out",
-            transitionDuration: "var(--fs-enter)",
+            transitionTimingFunction: "var(--fs-ease-out)",
+            transitionDuration: "var(--fs-enter-surface)",
           }}
         >
           <nav
             className="flex shrink-0 flex-col"
             style={{
-              width: "var(--fs-modal-sidebar-w)",
+              // 208 of cream plus the 1px divider, which border-box would
+              // otherwise eat: the reference's cream runs 554-969 native and
+              // the divider sits at 970-971, so the pane starts at 209 and its
+              // card measures 655, not 656.
+              width: "calc(var(--fs-modal-sidebar-w) + 1px)",
               background: "var(--fs-canvas)",
               borderRight: "1px solid var(--fs-hairline)",
               paddingTop: "19px",
@@ -220,12 +225,17 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             style={{ padding: "var(--fs-modal-px)" }}
           >
             <h1
-              className="mb-[30px]"
+              className="relative mb-[30px]"
               style={{
                 fontFamily: "var(--fs-font-serif)",
                 fontSize: "var(--fs-text-title-serif)",
                 fontWeight: 400,
                 lineHeight: 1.2,
+                // EB Garamond's ascent runs 1.5px deeper than the reference
+                // face at 28px, which put the cap top at 54.5 below the modal
+                // edge against a measured 53. Painted offset only, so the
+                // heading under it keeps its measured 117.5.
+                top: "-1.5px",
                 color: "var(--fs-ink)",
               }}
             >

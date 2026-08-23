@@ -16,6 +16,7 @@ import { useSettings } from "@/hooks/useSettings";
 import { useModelStore } from "@/stores/modelStore";
 import { PostProcessingSettings } from "../post-processing/PostProcessingSettings";
 import { FieldSelect, NumberField, TagList, TextField } from "./controls";
+import { ModelsPerformance } from "./ModelsPerformance";
 import { GroupCard, ToggleRow } from "./rows";
 
 const MIN_GRACE_MS = 1;
@@ -35,10 +36,11 @@ const TYPING_TOOL_LABELS: Record<string, string> = {
 };
 
 /**
- * Everything about what happens to the text after it is recognised, plus the
- * experimental group. The reference has no equivalent page — its own advanced
- * settings live behind features we do not have — so this follows its System
- * page's grammar: sentence-case headings over cream cards of rows.
+ * How the engine runs, everything about what happens to the text after it is
+ * recognised, and the experimental group. The reference has no equivalent
+ * page — its own advanced settings live behind features we do not have — so
+ * this follows its System page's grammar: sentence-case headings over cream
+ * cards of rows.
  */
 export const AdvancedPage: React.FC = () => {
   const { t } = useTranslation();
@@ -222,6 +224,8 @@ export const AdvancedPage: React.FC = () => {
 
   return (
     <>
+      <ModelsPerformance />
+
       <GroupCard title={t("settings.advanced.groups.output")}>
         <SettingRow
           title={t("settings.advanced.pasteMethod.title")}

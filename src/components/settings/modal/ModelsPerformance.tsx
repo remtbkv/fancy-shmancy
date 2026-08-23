@@ -40,10 +40,14 @@ const UNLOAD_DEBUG_OPTION = {
 
 /**
  * How the engine runs — acceleration, when the model is unloaded, and what the
- * microphone does between takes. The model *list* stays on the main window; a
- * catalogue does not belong in a 960x640 modal.
+ * microphone does between takes.
+ *
+ * One group inside Advanced rather than a page of its own: the model catalogue
+ * is a sidebar page in the main window, and a "Models" entry in the settings
+ * sidebar too made the same word mean two different places. These four rows
+ * are the only model settings that are not about *which* model.
  */
-export const ModelsPage: React.FC = () => {
+export const ModelsPerformance: React.FC = () => {
   const { t } = useTranslation();
   const { settings, getSetting, updateSetting, isUpdating } = useSettings();
   const [transcribeOptions, setTranscribeOptions] = useState<FieldOption[]>([]);
@@ -140,73 +144,68 @@ export const ModelsPage: React.FC = () => {
   };
 
   return (
-    <>
-      <GroupCard title={t("settings.modal.groups.acceleration")}>
-        <SettingRow
-          title={t("settings.advanced.acceleration.transcribe.title")}
-          subtitle={
-            transcribeOptions.find((option) => option.value === transcribeValue)
-              ?.label ?? t("common.loading")
+    <GroupCard title={t("settings.modal.groups.modelsPerformance")}>
+      <SettingRow
+        title={t("settings.advanced.acceleration.transcribe.title")}
+        subtitle={
+          transcribeOptions.find((option) => option.value === transcribeValue)
+            ?.label ?? t("common.loading")
+        }
+      >
+        <FieldSelect
+          wide
+          options={transcribeOptions}
+          value={transcribeValue}
+          placeholder={t("common.loading")}
+          onSelect={(value) => void selectTranscribe(value)}
+          disabled={
+            isUpdating("transcribe_accelerator") ||
+            isUpdating("transcribe_gpu_device")
           }
+        />
+      </SettingRow>
+      {ortOptions.length > 2 && (
+        <SettingRow
+          title={t("settings.advanced.acceleration.ort.title")}
+          subtitle={ORT_LABELS[ortValue] ?? ortValue}
         >
           <FieldSelect
-            wide
-            options={transcribeOptions}
-            value={transcribeValue}
-            placeholder={t("common.loading")}
-            onSelect={(value) => void selectTranscribe(value)}
-            disabled={
-              isUpdating("transcribe_accelerator") ||
-              isUpdating("transcribe_gpu_device")
+            options={ortOptions}
+            value={ortValue}
+            onSelect={(value) =>
+              void updateSetting(
+                "ort_accelerator",
+                value as OrtAcceleratorSetting,
+              )
             }
+            disabled={isUpdating("ort_accelerator")}
           />
         </SettingRow>
-        {ortOptions.length > 2 && (
-          <SettingRow
-            title={t("settings.advanced.acceleration.ort.title")}
-            subtitle={ORT_LABELS[ortValue] ?? ortValue}
-          >
-            <FieldSelect
-              options={ortOptions}
-              value={ortValue}
-              onSelect={(value) =>
-                void updateSetting(
-                  "ort_accelerator",
-                  value as OrtAcceleratorSetting,
-                )
-              }
-              disabled={isUpdating("ort_accelerator")}
-            />
-          </SettingRow>
-        )}
-        <SettingRow
-          title={t("settings.advanced.modelUnload.title")}
-          subtitle={
-            unloadOptions.find((option) => option.value === unloadValue)
-              ?.label ?? ""
-          }
-        >
-          <FieldSelect
-            options={unloadOptions}
-            value={unloadValue}
-            onSelect={(value) => void selectUnload(value)}
-          />
-        </SettingRow>
-      </GroupCard>
-
-      <GroupCard title={t("settings.modal.groups.listening")}>
-        <ToggleRow
-          settingKey="vad_enabled"
-          title={t("settings.advanced.voiceActivityDetection.title")}
-          subtitle={t("settings.modal.hints.vad")}
-          fallback
+      )}
+      <SettingRow
+        title={t("settings.advanced.modelUnload.title")}
+        subtitle={
+          unloadOptions.find((option) => option.value === unloadValue)?.label ??
+          ""
+        }
+      >
+        <FieldSelect
+          options={unloadOptions}
+          value={unloadValue}
+          onSelect={(value) => void selectUnload(value)}
         />
-        <ToggleRow
-          settingKey="always_on_microphone"
-          title={t("settings.debug.alwaysOnMicrophone.label")}
-          subtitle={t("settings.debug.alwaysOnMicrophone.description")}
-        />
-      </GroupCard>
-    </>
+      </SettingRow>
+      <ToggleRow
+        settingKey="vad_enabled"
+        title={t("settings.advanced.voiceActivityDetection.title")}
+        subtitle={t("settings.modal.hints.vad")}
+        fallback
+      />
+      <ToggleRow
+        settingKey="always_on_microphone"
+        title={t("settings.debug.alwaysOnMicrophone.label")}
+        subtitle={t("settings.debug.alwaysOnMicrophone.description")}
+      />
+    </GroupCard>
   );
 };
