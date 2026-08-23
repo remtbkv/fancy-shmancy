@@ -15,7 +15,12 @@ interface SectionLabelProps {
 /**
  * Measured tracking for the eyebrow: inter-glyph gaps run 4 native px against
  * a ~1.5 native side bearing at a 17 native cap height, i.e. ~0.08em at 12px.
- * The group heading sits 20px above its card, 30px below the previous one.
+ *
+ * The group heading's measured rhythm is baseline-to-edge, not box-to-edge: 20
+ * from its baseline down to the card top, 30 from the previous card's bottom up
+ * to its ink. The margins below are those numbers less the line box's own
+ * overhang (5.9 above the ink, 6 under the baseline at 15px/24px), which is
+ * what lands the ink and the card where the reference has them.
  */
 export const SectionLabel: React.FC<SectionLabelProps> = ({
   variant = "eyebrow",
@@ -24,7 +29,7 @@ export const SectionLabel: React.FC<SectionLabelProps> = ({
 }) =>
   variant === "group" ? (
     <h2
-      className={`mt-[30px] mb-[20px] first:mt-0 ${className}`}
+      className={`mt-[24.5px] mb-[14px] first:mt-0 ${className}`}
       style={{
         fontFamily: "var(--fs-font-sans)",
         fontSize: "var(--fs-text-body)",

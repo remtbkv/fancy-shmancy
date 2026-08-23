@@ -37,6 +37,10 @@ export const SettingRow: React.FC<SettingRowProps> = ({
     className={`flex items-center justify-between border-b border-[var(--fs-hairline)] last:border-b-0
       ${disabled ? "opacity-50" : ""} ${className}`}
     style={{
+      // content-box so the divider sits outside the measured row height: the
+      // reference's single-line row is 65 of row plus a 1px hairline = 66
+      // pitch, and the last row, which drops the hairline, is 65.
+      boxSizing: "content-box",
       minHeight: subtitle ? "var(--fs-row-h-stacked)" : "var(--fs-row-h)",
       paddingInline: "var(--fs-row-px)",
       gap: "var(--fs-row-px)",
