@@ -46,21 +46,23 @@ def acc_from_wer(wer):
 # by language coverage: most people dictating in English do not benefit from a
 # model that also knows 99 other languages, and a first-run list of five with
 # two multilingual entries is a decision a new user has no basis to make.
-# Biggest first, then a smaller English one, then one that runs on anything.
+# One rung per machine — a 2B for a recent Mac, a 1B, and one that runs on
+# anything — and all three cover at least English/French/German/Spanish, so the
+# rung is the only choice being made.
 CURATION = {
     "cohere-transcribe-03-2026":       {"rank": 1, "rec": True, "desc": "Most accurate. 2B, needs a recent Mac"},
-    "parakeet-unified-en-0.6b":        {"rank": 2, "rec": True, "desc": "Nearly as accurate, three times lighter. English"},
+    "canary-1b-flash":                 {"rank": 2, "rec": True, "desc": "Nearly as accurate, half the size and faster"},
     "canary-180m-flash":               {"rank": 3, "rec": True, "desc": "Tiny and instant, runs well on any hardware"},
-    # ranked but no longer offered up front: both are multilingual, and both
-    # score below all three above on accuracy.
-    "nemotron-3.5-asr-streaming-0.6b": {"rank": 4, "desc": "Live multilingual transcription across 28 languages"},
-    "whisper-medium":                  {"rank": 5, "desc": "Broadest language, but may run a bit slow"},
+    # ranked but no longer offered up front.
+    "parakeet-unified-en-0.6b":        {"rank": 4, "desc": "Fast, streaming and accurate. English only"},
+    "nemotron-3.5-asr-streaming-0.6b": {"rank": 5, "desc": "Live multilingual transcription across 28 languages"},
+    "whisper-medium":                  {"rank": 6, "desc": "Broadest language, but may run a bit slow"},
     # ranked (sorted high) but NOT tagged recommended
-    "Voxtral-Mini-4B-Realtime-2602":   {"rank": 6, "desc": "Live multilingual, excellent on powerful machines"},
-    "parakeet-tdt-0.6b-v3":            {"rank": 7, "desc": "Fast and accurate. Supports 25 European languages"},
-    "parakeet-tdt-0.6b-v2":            {"rank": 8, "desc": "English only. The best model for English speakers"},
-    "Qwen3-ASR-0.6B":                  {"rank": 9, "desc": "Excellent multilingual model"},
-    "Fun-ASR-MLT-Nano-2512":           {"rank": 10, "desc": "A tiny multilingual model"},
+    "Voxtral-Mini-4B-Realtime-2602":   {"rank": 7, "desc": "Live multilingual, excellent on powerful machines"},
+    "parakeet-tdt-0.6b-v3":            {"rank": 8, "desc": "Fast and accurate. Supports 25 European languages"},
+    "parakeet-tdt-0.6b-v2":            {"rank": 9, "desc": "English only. The best model for English speakers"},
+    "Qwen3-ASR-0.6B":                  {"rank": 10, "desc": "Excellent multilingual model"},
+    "Fun-ASR-MLT-Nano-2512":           {"rank": 11, "desc": "A tiny multilingual model"},
     # description-only (unranked, not recommended) — carried over from the legacy .bin entry
     "Breeze-ASR-25":                   {"desc": "Optimized for Taiwanese Mandarin. Code-switching support."},
     # Sortformer emits speaker segments only; Handy's catalog is for models
