@@ -469,7 +469,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
             recordingIndex === index ? (
               <div
                 key={`recording-${index}`}
-                className="px-2 py-1 text-sm font-semibold border border-logo-primary bg-logo-primary/30 rounded-md"
+                className="px-2 py-1 text-sm font-semibold border border-logo-primary bg-[var(--fs-quiet)] rounded-md"
               >
                 {formatCurrentKeys()}
               </div>
@@ -498,7 +498,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
 
           {/* A brand new slot being recorded at the end of the list */}
           {isRecordingNewSlot && shortcuts.length > 0 && (
-            <div className="px-2 py-1 text-sm font-semibold border border-logo-primary bg-logo-primary/30 rounded-md">
+            <div className="px-2 py-1 text-sm font-semibold border border-logo-primary bg-[var(--fs-quiet)] rounded-md">
               {formatCurrentKeys()}
             </div>
           )}

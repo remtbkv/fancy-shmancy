@@ -26,12 +26,19 @@
      in App.css reference these, so a hex value lives in exactly one place. */
   --light-color-text: #0f0f0f;
   --light-color-background: #fbfbfb;
-  --light-color-logo-primary: #a8801f;
+  /* Was the brand gold (#a8801f / #e0be63). The reference has no accent hue at
+     all — emphasis is a dark pill, selection is a neutral grey wash, red is for
+     attention and teal is a data colour — so every incidental use of this token
+     (hover tints, focus rings, spinners, selected-row fills) resolves to ink and
+     reads neutral. The gold survives where it is actually the brand: the app
+     icon and the 67 mark artwork, which are images, not tokens. The recording
+     overlay pins its own accent in RecordingOverlay.css and is unaffected. */
+  --light-color-logo-primary: #1a1a1a;
   --light-color-logo-stroke: #2a1836;
 
   --dark-color-text: #fbfbfb;
   --dark-color-background: #2c2b29;
-  --dark-color-logo-primary: #e0be63;
+  --dark-color-logo-primary: #fbfbfb;
   --dark-color-logo-stroke: #f3e2b8;
 
   /* Semantic status colors. First used by SecureInputWarning; intended to
@@ -183,16 +190,22 @@
   );
   --fs-dark-toggle-knob: var(--dark-color-background);
 
-  /* Accents are used as measured in both themes — the orange shortcut pill,
-     the red badge, the lavender quota card and the chart teal are the
-     reference's palette and are not re-tinted for dark mode. */
+  /* Accents are the reference's own palette and are used as measured — the
+     orange shortcut pill, the red badge, the lavender quota card. Only the
+     chart teal is re-tinted for dark, and only for legibility (below). */
   --fs-keycap: #ffa946;
   --fs-keycap-border: #1a1a1a;
   --fs-badge: #ee6a6a;
   --fs-badge-ink: #ffffff;
   --fs-quota: #fbf2ff;
   --fs-quota-border: #f4e1ff;
-  --fs-accent: #195c5d;
+  /* The chart teal, the app's one data colour and its only hue. Light is the
+     measured value; dark is that value lifted 34% toward white, because #195c5d
+     against the #2c2b29 dark canvas is too close in luminance to read as a
+     filled bar. Not measured — the reference has no dark mode. */
+  --fs-light-accent: #195c5d;
+  --fs-dark-accent: color-mix(in srgb, #195c5d, white 34%);
+  --fs-accent: var(--fs-light-accent);
   /* Derived: identical points read #f5f4f1 → #b3b2b0 and #fcfcfb → #b8b8b7
      between the un-scrimmed and scrimmed screenshots, a uniform x0.730. */
   --fs-scrim: rgba(0, 0, 0, 0.27);
@@ -222,6 +235,10 @@
   /* Metrics */
   --fs-sidebar-w: 216px;
   --fs-sidebar-inset: 12px;
+  /* Cream band above the content card, where the traffic lights float now that
+     the window has no titlebar of its own: card top 220 native against a
+     window top of 114. */
+  --fs-titlebar-h: 53px;
   --fs-item-h: 36px;
   --fs-item-px: 8px;
   --fs-item-gap: 8px;
@@ -245,6 +262,17 @@
      Enter fast, exit faster, never animate layout. */
   --fs-enter: 80ms;
   --fs-exit: 30ms;
+  /* Surfaces that arrive with a scale (the settings sheet, its scrim) run
+     longer than the 80ms measured off the reference: at 80ms a 2% scale is
+     over before the eye resolves it, so the sheet read as popping into place
+     rather than arriving. Rem's verdict on the built UI ("opens way too quick,
+     not smooth at all") beats the number measured off someone else's app.
+     Dismissal keeps the measured --fs-exit, so exit is still ~5x faster. */
+  --fs-enter-surface: 155ms;
+  /* A real deceleration curve. CSS `ease-out` is cubic-bezier(0,0,0.58,1),
+     which spends most of a short duration near full speed and lands abruptly;
+     this one front-loads the travel so the last third settles. */
+  --fs-ease-out: cubic-bezier(0.16, 0.84, 0.44, 1);
 
   /* Active set — light by default, following the OS, overridden by
      `data-theme` exactly like the palette above. */
@@ -282,6 +310,7 @@
     --fs-row-hover: var(--fs-dark-row-hover);
     --fs-toggle-off: var(--fs-dark-toggle-off);
     --fs-toggle-knob-fill: var(--fs-dark-toggle-knob);
+    --fs-accent: var(--fs-dark-accent);
   }
 }
 
@@ -301,6 +330,7 @@
   --fs-row-hover: var(--fs-light-row-hover);
   --fs-toggle-off: var(--fs-light-toggle-off);
   --fs-toggle-knob-fill: var(--fs-light-toggle-knob);
+  --fs-accent: var(--fs-light-accent);
 }
 
 :root[data-theme="dark"] {
@@ -319,4 +349,5 @@
   --fs-row-hover: var(--fs-dark-row-hover);
   --fs-toggle-off: var(--fs-dark-toggle-off);
   --fs-toggle-knob-fill: var(--fs-dark-toggle-knob);
+  --fs-accent: var(--fs-dark-accent);
 }
