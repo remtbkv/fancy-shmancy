@@ -118,7 +118,9 @@ export const TranscriptList: React.FC<TranscriptListProps> = ({
       <style>{FADE_KEYFRAMES}</style>
       {groupByDay(entries, i18n.language).map((day, index) => (
         <section key={day.key} className={index === 0 ? "" : "mt-[32px]"}>
-          <SectionLabel className="mb-[12px]">{day.label}</SectionLabel>
+          {/* 10, not 12: the reference's gap is ink-to-divider (34 native, 17
+              css) and the 12px line box hangs ~3.5 css below its own ink. */}
+          <SectionLabel className="mb-[10px]">{day.label}</SectionLabel>
           {day.entries.map((entry) => (
             <TranscriptRow
               key={entry.id}

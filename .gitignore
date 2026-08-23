@@ -45,3 +45,8 @@ result
 
 # Python bytecode (scripts/)
 __pycache__/
+
+# Fixtures for the headless UI harness are generated from the installed app's
+# own settings and history (scripts/ui-shots/make-fixtures.py) — machine-local
+# data, not something to commit.
+scripts/ui-shots/fixtures.json

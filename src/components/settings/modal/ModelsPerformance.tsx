@@ -21,20 +21,29 @@ const ORT_LABELS: Record<OrtAcceleratorSetting, string> = {
 
 /**
  * The unload options, paired with the translation key they had before the
- * modal existed. The stored values are the Rust enum's snake_case names.
+ * modal existed.
+ *
+ * The values are what serde reads and writes — `min15`, `hour1`, `hours4` — and
+ * every cast below is deliberate. The generated `ModelUnloadTimeout` union
+ * spells them `min_15`, `hour_1`, `hours_4`, because specta puts a boundary
+ * before a digit where serde's `rename_all = "snake_case"` does not. Sending
+ * the generated spelling means Rust cannot parse what the dropdown wrote, and
+ * comparing against it means a stored `hours4` matches nothing and the row
+ * renders blank. `settings.rs::unload_timeout_serde_names_are_what_the_dropdown_sends`
+ * pins the real contract.
  */
 const UNLOAD_OPTIONS: { value: ModelUnloadTimeout; key: string }[] = [
   { value: "never", key: "never" },
   { value: "immediately", key: "immediately" },
-  { value: "min_2", key: "min2" },
-  { value: "min_5", key: "min5" },
-  { value: "min_10", key: "min10" },
-  { value: "min_15", key: "min15" },
-  { value: "hour_1", key: "hour1" },
-  { value: "hours_4", key: "hours4" },
+  { value: "min2" as ModelUnloadTimeout, key: "min2" },
+  { value: "min5" as ModelUnloadTimeout, key: "min5" },
+  { value: "min10" as ModelUnloadTimeout, key: "min10" },
+  { value: "min15" as ModelUnloadTimeout, key: "min15" },
+  { value: "hour1" as ModelUnloadTimeout, key: "hour1" },
+  { value: "hours4" as ModelUnloadTimeout, key: "hours4" },
 ];
 const UNLOAD_DEBUG_OPTION = {
-  value: "sec_15" as ModelUnloadTimeout,
+  value: "sec15" as ModelUnloadTimeout,
   key: "sec15",
 };
 
