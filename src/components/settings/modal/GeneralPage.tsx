@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { type } from "@tauri-apps/plugin-os";
-import { commands, type ModelInfo, type Theme } from "@/bindings";
+import { commands, type ModelInfo } from "@/bindings";
 import { SettingRow } from "@/components/ui";
 import { useSettings } from "@/hooks/useSettings";
 import {
@@ -14,7 +14,6 @@ import {
   SELECTABLE_LANGUAGES,
   supportsLanguageCode,
 } from "@/lib/constants/languages";
-import { applyTheme, THEME_OPTIONS } from "@/lib/utils/theme";
 import { useModelStore } from "@/stores/modelStore";
 import { effectiveLanguage } from "../LanguageSelector";
 import { FieldSelect } from "./controls";
@@ -127,7 +126,6 @@ export const GeneralPage: React.FC = () => {
 
   const appLanguage = (getSupportedLanguage(settings?.app_language) ||
     i18n.language) as SupportedLanguageCode;
-  const theme: Theme = settings?.theme ?? "system";
 
   return (
     <>
@@ -268,22 +266,6 @@ export const GeneralPage: React.FC = () => {
             onSelect={(value) => {
               void i18n.changeLanguage(value);
               void updateSetting("app_language", value);
-            }}
-          />
-        </SettingRow>
-        <SettingRow
-          title={t("theme.title")}
-          subtitle={t(`theme.options.${theme}`)}
-        >
-          <FieldSelect
-            options={THEME_OPTIONS.map((option) => ({
-              value: option,
-              label: t(`theme.options.${option}`),
-            }))}
-            value={theme}
-            onSelect={(value) => {
-              applyTheme(value as Theme);
-              void updateSetting("theme", value as Theme);
             }}
           />
         </SettingRow>

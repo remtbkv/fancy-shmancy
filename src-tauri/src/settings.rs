@@ -285,8 +285,9 @@ impl SoundTheme {
     }
 }
 
-/// UI appearance mode. `System` follows the OS `prefers-color-scheme`; `Light`
-/// and `Dark` force one of the two palettes Handy already ships.
+/// UI appearance mode. Retired as a user setting — the app is dark and
+/// `apply_settings_migrations` folds any stored value onto `Dark`. The variants
+/// stay so a store written by an older build still deserializes.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum Theme {
@@ -754,7 +755,7 @@ fn default_sound_theme() -> SoundTheme {
 }
 
 fn default_theme() -> Theme {
-    Theme::System
+    Theme::Dark
 }
 
 fn default_post_process_enabled() -> bool {
@@ -1372,6 +1373,34 @@ fn apply_settings_migrations(
         updated = true;
     }
 
+    // Settings this fork retired, folded onto the one value the UI now offers.
+    // These run on every load, not once: there is no key to check for absence,
+    // and the point is that a store carrying the old value can never win.
+
+    // The appearance picker is gone; the app is dark.
+    if settings.theme != Theme::Dark {
+        settings.theme = Theme::Dark;
+        updated = true;
+    }
+
+    // The overlay is off or it is the live panel. `Minimal` keeps its variant so
+    // an old store deserializes, but nothing selects it any more.
+    if settings.overlay_style == OverlayStyle::Minimal {
+        settings.overlay_style = OverlayStyle::Live;
+        updated = true;
+    }
+
+    // Voice activity detection and filler-word removal are not choices: without
+    // VAD every pause becomes hallucinated text, and nobody wants the "um" back.
+    if !settings.vad_enabled {
+        settings.vad_enabled = true;
+        updated = true;
+    }
+    if !settings.filler_word_removal_enabled {
+        settings.filler_word_removal_enabled = true;
+        updated = true;
+    }
+
     updated
 }
 
@@ -1789,6 +1818,57 @@ mod tests {
         assert!(apply_settings_migrations(&mut settings, &raw));
         assert_eq!(settings.overlay_style, OverlayStyle::Live);
         assert_eq!(settings.overlay_position, OverlayPosition::Top);
+    }
+
+    /// The four settings this fork retired. Each is folded on every load, so a
+    /// store carrying the old value cannot outlive one launch.
+    #[test]
+    fn retired_settings_fold_onto_their_only_remaining_value() {
+        let mut settings = get_default_settings();
+        settings.theme = Theme::Light;
+        settings.overlay_style = OverlayStyle::Minimal;
+        settings.vad_enabled = false;
+        settings.filler_word_removal_enabled = false;
+
+        // A fully-migrated store otherwise, so only the folds can report work.
+        let raw = serde_json::json!({
+            "settings_schema_version": CURRENT_SETTINGS_SCHEMA_VERSION,
+            "onboarding_completed": true,
+            "whats_new_last_seen_version": "0.9.5",
+            "overlay_style": "minimal",
+            "theme": "light",
+            "vad_enabled": false,
+            "filler_word_removal_enabled": false
+        });
+
+        assert!(apply_settings_migrations(&mut settings, &raw));
+        assert_eq!(settings.theme, Theme::Dark);
+        assert_eq!(settings.overlay_style, OverlayStyle::Live);
+        assert!(settings.vad_enabled);
+        assert!(settings.filler_word_removal_enabled);
+    }
+
+    /// `None` is still a choice — the fold must not switch the overlay back on
+    /// for someone who turned it off.
+    #[test]
+    fn overlay_fold_leaves_a_disabled_overlay_disabled() {
+        let mut settings = get_default_settings();
+        settings.overlay_style = OverlayStyle::None;
+
+        let raw = serde_json::json!({
+            "settings_schema_version": CURRENT_SETTINGS_SCHEMA_VERSION,
+            "onboarding_completed": true,
+            "whats_new_last_seen_version": "0.9.5",
+            "overlay_style": "none"
+        });
+
+        assert!(!apply_settings_migrations(&mut settings, &raw));
+        assert_eq!(settings.overlay_style, OverlayStyle::None);
+    }
+
+    #[test]
+    fn default_theme_is_dark() {
+        assert_eq!(get_default_settings().theme, Theme::Dark);
     }
 
     #[test]

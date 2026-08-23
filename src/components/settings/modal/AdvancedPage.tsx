@@ -378,49 +378,47 @@ export const AdvancedPage: React.FC = () => {
           )}
       </GroupCard>
 
-      <GroupCard title={t("settings.advanced.groups.transcription")}>
-        <ToggleRow
-          settingKey="filler_word_removal_enabled"
-          title={t("settings.advanced.fillerWordRemoval.title")}
-          subtitle={t("settings.modal.hints.fillerWords")}
-          fallback
-        />
-        {supportsTranslation && (
-          <ToggleRow
-            settingKey="translate_to_english"
-            title={t("settings.advanced.translateToEnglish.label")}
-            subtitle={t("settings.modal.hints.translateToEnglish")}
-          />
-        )}
-        {/* Only push-to-talk holds a key long enough for an editing chord to
-            be mistaken for dictation. */}
-        {pushToTalk && (
-          <ToggleRow
-            settingKey="cancel_on_editing_keys"
-            title={t("settings.general.cancelOnEditingKeys.label")}
-            subtitle={t("settings.modal.hints.cancelOnEditingKeys")}
-            fallback
-          />
-        )}
-        {pushToTalk && cancelOnEditingKeys && (
-          <SettingRow
-            title={t("settings.general.editingCancelGrace.title")}
-            subtitle={t("settings.modal.hints.editingCancelGrace")}
-          >
-            <NumberField
-              value={graceMs}
-              unit={t("settings.general.editingCancelGrace.ms")}
-              min={MIN_GRACE_MS}
-              max={MAX_GRACE_MS}
-              step={50}
-              disabled={isUpdating("editing_cancel_grace_ms")}
-              onCommit={(next) =>
-                void updateSetting("editing_cancel_grace_ms", next)
-              }
+      {/* Filler-word removal used to head this card and is now always on, so
+          everything left is conditional and the card can have nothing to show. */}
+      {(supportsTranslation || pushToTalk) && (
+        <GroupCard title={t("settings.advanced.groups.transcription")}>
+          {supportsTranslation && (
+            <ToggleRow
+              settingKey="translate_to_english"
+              title={t("settings.advanced.translateToEnglish.label")}
+              subtitle={t("settings.modal.hints.translateToEnglish")}
             />
-          </SettingRow>
-        )}
-      </GroupCard>
+          )}
+          {/* Only push-to-talk holds a key long enough for an editing chord to
+              be mistaken for dictation. */}
+          {pushToTalk && (
+            <ToggleRow
+              settingKey="cancel_on_editing_keys"
+              title={t("settings.general.cancelOnEditingKeys.label")}
+              subtitle={t("settings.modal.hints.cancelOnEditingKeys")}
+              fallback
+            />
+          )}
+          {pushToTalk && cancelOnEditingKeys && (
+            <SettingRow
+              title={t("settings.general.editingCancelGrace.title")}
+              subtitle={t("settings.modal.hints.editingCancelGrace")}
+            >
+              <NumberField
+                value={graceMs}
+                unit={t("settings.general.editingCancelGrace.ms")}
+                min={MIN_GRACE_MS}
+                max={MAX_GRACE_MS}
+                step={50}
+                disabled={isUpdating("editing_cancel_grace_ms")}
+                onCommit={(next) =>
+                  void updateSetting("editing_cancel_grace_ms", next)
+                }
+              />
+            </SettingRow>
+          )}
+        </GroupCard>
+      )}
 
       <GroupCard title={t("settings.modal.groups.postProcessing")}>
         <SettingRow
@@ -433,43 +431,40 @@ export const AdvancedPage: React.FC = () => {
         </SettingRow>
       </GroupCard>
 
-      <GroupCard title={t("settings.advanced.groups.experimental")}>
-        <ToggleRow
-          settingKey="experimental_enabled"
-          title={t("settings.advanced.experimentalToggle.label")}
-          subtitle={t("settings.modal.hints.experimental")}
-        />
-        {experimental && (
-          <>
-            <ToggleRow
-              settingKey="post_process_enabled"
-              title={t("settings.debug.postProcessingToggle.label")}
-              subtitle={t("settings.debug.postProcessingToggle.description")}
+      {/* No toggle any more: `experimental_enabled` defaults off and nothing in
+          the UI turns it on, so this group is normally absent entirely. It still
+          renders for a store that already had it set, which is the only way
+          those three knobs stay reachable at all. */}
+      {experimental && (
+        <GroupCard title={t("settings.advanced.groups.experimental")}>
+          <ToggleRow
+            settingKey="post_process_enabled"
+            title={t("settings.debug.postProcessingToggle.label")}
+            subtitle={t("settings.debug.postProcessingToggle.description")}
+          />
+          <SettingRow
+            title={t("settings.debug.keyboardImplementation.title")}
+            subtitle={
+              KEYBOARD_IMPLEMENTATIONS.find(
+                (option) => option.value === keyboardImplementation,
+              )?.label ?? ""
+            }
+          >
+            <FieldSelect
+              wide
+              options={KEYBOARD_IMPLEMENTATIONS}
+              value={keyboardImplementation}
+              onSelect={(value) => void selectKeyboardImplementation(value)}
+              disabled={isUpdating("keyboard_implementation")}
             />
-            <SettingRow
-              title={t("settings.debug.keyboardImplementation.title")}
-              subtitle={
-                KEYBOARD_IMPLEMENTATIONS.find(
-                  (option) => option.value === keyboardImplementation,
-                )?.label ?? ""
-              }
-            >
-              <FieldSelect
-                wide
-                options={KEYBOARD_IMPLEMENTATIONS}
-                value={keyboardImplementation}
-                onSelect={(value) => void selectKeyboardImplementation(value)}
-                disabled={isUpdating("keyboard_implementation")}
-              />
-            </SettingRow>
-            <ToggleRow
-              settingKey="lazy_stream_close"
-              title={t("settings.advanced.lazyStreamClose.label")}
-              subtitle={t("settings.modal.hints.lazyStreamClose")}
-            />
-          </>
-        )}
-      </GroupCard>
+          </SettingRow>
+          <ToggleRow
+            settingKey="lazy_stream_close"
+            title={t("settings.advanced.lazyStreamClose.label")}
+            subtitle={t("settings.modal.hints.lazyStreamClose")}
+          />
+        </GroupCard>
+      )}
     </>
   );
 };

@@ -53,8 +53,8 @@ const UNLOAD_DEBUG_OPTION = {
  *
  * One group inside Advanced rather than a page of its own: the model catalogue
  * is a sidebar page in the main window, and a "Models" entry in the settings
- * sidebar too made the same word mean two different places. These four rows
- * are the only model settings that are not about *which* model.
+ * sidebar too made the same word mean two different places. These rows are the
+ * only model settings that are not about *which* model.
  */
 export const ModelsPerformance: React.FC = () => {
   const { t } = useTranslation();
@@ -204,12 +204,6 @@ export const ModelsPerformance: React.FC = () => {
           onSelect={(value) => void selectUnload(value)}
         />
       </SettingRow>
-      <ToggleRow
-        settingKey="vad_enabled"
-        title={t("settings.advanced.voiceActivityDetection.title")}
-        subtitle={t("settings.modal.hints.vad")}
-        fallback
-      />
       <ToggleRow
         settingKey="always_on_microphone"
         title={t("settings.debug.alwaysOnMicrophone.label")}

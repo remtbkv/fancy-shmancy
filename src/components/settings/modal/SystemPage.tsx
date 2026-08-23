@@ -33,7 +33,12 @@ export const SystemPage: React.FC = () => {
   const playTestSound = useSettingsStore((state) => state.playTestSound);
   const customSounds = useSettingsStore((state) => state.customSounds);
 
-  const overlayStyle = (getSetting("overlay_style") || "live") as OverlayStyle;
+  // Two choices: off, or the live panel. `minimal` was retired — Rust migrates
+  // a stored one to `live` on load, and this fold covers the frame before that
+  // reaches the UI.
+  const storedOverlayStyle = getSetting("overlay_style");
+  const overlayStyle: OverlayStyle =
+    storedOverlayStyle === "none" ? "none" : "live";
   // Only top and bottom are selectable; a legacy "none" position reads as
   // bottom, exactly as the old selector resolved it.
   const overlayPosition: OverlayPosition =
@@ -48,10 +53,6 @@ export const SystemPage: React.FC = () => {
 
   const overlayStyleOptions: { value: OverlayStyle; label: string }[] = [
     { value: "none", label: t("settings.advanced.overlay.style.options.none") },
-    {
-      value: "minimal",
-      label: t("settings.advanced.overlay.style.options.minimal"),
-    },
     { value: "live", label: t("settings.advanced.overlay.style.options.live") },
   ];
   const overlayPositionOptions: { value: OverlayPosition; label: string }[] = [
@@ -207,11 +208,6 @@ export const SystemPage: React.FC = () => {
         <ToggleRow
           settingKey="update_checks_enabled"
           title={t("settings.debug.updateChecks.label")}
-          fallback
-        />
-        <ToggleRow
-          settingKey="show_whats_new_on_update"
-          title={t("settings.about.whatsNewUpdates.label")}
           fallback
         />
       </GroupCard>

@@ -996,12 +996,12 @@ pub fn run(cli_args: CliArgs) {
 
             let mut settings = get_settings(app.handle());
 
-            // Apply the persisted appearance theme to the native title bar before
-            // the window is shown, so it matches the in-app palette without a flash
-            // of the wrong theme. See `apply_window_theme` for what this does per
-            // platform.
+            // Dark, unconditionally, and before the window is shown. Not
+            // `settings.theme`: the migration normalizes that to Dark on load,
+            // but a store that failed to migrate must not be able to light the
+            // title bar. See `apply_window_theme` for what this does per platform.
             #[cfg(any(target_os = "windows", target_os = "macos"))]
-            shortcut::apply_window_theme(app.handle(), settings.theme);
+            shortcut::apply_window_theme(app.handle(), settings::Theme::Dark);
 
             // CLI --debug flag overrides debug_mode and log level (runtime-only, not persisted)
             if cli_args.debug {
