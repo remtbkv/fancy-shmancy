@@ -92,13 +92,40 @@ a hole that every later commit conflicts against. Merging the release tag (not
 cherry-picking commits out of it) is what records ancestry, so the next sync only
 sees what is new.
 
+## Sync record
+
+**v0.9.6, 2026-08-25.** 5 incoming commits, 14 files touched by upstream, 2
+conflicts: `actions.rs` and `tauri.conf.json` (a version bump). The release
+notes list 20 PRs, but four of the five that could have hurt this fork —
+appearance-reaches-the-overlay (#1659), the filler fixes (#1738), multi-word
+custom words (#1406), transcribe.cpp 0.2.0 (#1924) — were already ancestors of
+this branch from an earlier `main` merge, and the fork had already answered
+#1659 by pinning the flow bar's colours. So the whole cost of the release was
+the single-writer tray (#1952): `change_tray_icon` became `set_tray_state`,
+`CurrentTrayIconState` became `TrayState`, and `update_tray_menu` lost its
+locale argument. `tray.rs` was taken wholesale — the fork's only edit in that
+file was one field in a test helper.
+
+The conflict markers caught 12 of the 14 renamed call sites in `actions.rs`.
+The two they missed sit in a region this fork rewrote (the editing-key quiet
+window), so the merge had nothing to disagree about and kept the old name.
+That is hazard shape 2 arriving in Rust instead of TypeScript, where `tsc`
+would have caught it: after an upstream rename, grep the old symbol across the
+whole tree. A file that merged cleanly _because_ the fork restructured it is
+exactly where a stale name survives.
+
 ## Known fork-vs-upstream inconsistencies
 
 - `bindings.ts` spells the settings enums `min_15` / `hour_1`, while serde — and
   therefore the dropdowns and `settings_store.json` — uses `min15` / `hour1`. The
   UI casts past the mismatch. A test pins the serialized names.
-- The translation checker fails on ~34 keys this fork added in English only. A
-  sync should leave that number unchanged, not reduce it to zero.
+- The translation checker fails on 49 keys this fork added in English only (34
+  after v0.9.5; the fork has added keys since). A sync should leave that number
+  unchanged, not reduce it to zero.
+- The tray tooltip and the disabled version item at the top of its menu read
+  `Handy v0.9.6`. The branding sweep covered the i18n strings; this one is
+  formatted in `tray.rs` from `CARGO_PKG_VERSION` and was missed. It predates
+  the v0.9.6 sync.
 - `mute_while_recording` is still honored in Rust with no UI to reach it; the
   toggle was dropped on purpose.
 
