@@ -443,11 +443,14 @@ pub fn tray_tooltip() -> String {
     version_label()
 }
 
+// Upstream's own terms reserve the Handy name for upstream builds, so a fork
+// handed to someone else cannot carry it — and this string is the one the
+// branding sweep missed, because it is formatted here rather than translated.
 fn version_label() -> String {
     if cfg!(debug_assertions) {
-        format!("Handy v{} (Dev)", env!("CARGO_PKG_VERSION"))
+        format!("Fancy Shmancy v{} (Dev)", env!("CARGO_PKG_VERSION"))
     } else {
-        format!("Handy v{}", env!("CARGO_PKG_VERSION"))
+        format!("Fancy Shmancy v{}", env!("CARGO_PKG_VERSION"))
     }
 }
 
