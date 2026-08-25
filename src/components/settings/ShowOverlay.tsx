@@ -15,14 +15,13 @@ export const ShowOverlay: React.FC<ShowOverlayProps> = React.memo(
     const { t } = useTranslation();
     const { getSetting, updateSetting, isUpdating } = useSettings();
 
+    // "minimal" is not offered: the pill was a worse Live, so the choice is
+    // whether there is an overlay at all. The variant survives in Rust for old
+    // stores, which the settings migration folds onto "live" on load.
     const styleOptions = [
       {
         value: "none",
         label: t("settings.advanced.overlay.style.options.none"),
-      },
-      {
-        value: "minimal",
-        label: t("settings.advanced.overlay.style.options.minimal"),
       },
       {
         value: "live",
@@ -41,8 +40,10 @@ export const ShowOverlay: React.FC<ShowOverlayProps> = React.memo(
       },
     ];
 
-    const selectedStyle = (getSetting("overlay_style") ||
-      "live") as OverlayStyle;
+    // A store that still says "minimal" reads as Live here, matching what the
+    // backend will have written by the time this renders.
+    const stored = getSetting("overlay_style");
+    const selectedStyle: OverlayStyle = stored === "none" ? "none" : "live";
     // Only "top" and "bottom" are selectable; anything else (empty, or a legacy
     // "none" from before the position was retired) falls back to "bottom".
     const selectedPosition: OverlayPosition =

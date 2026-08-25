@@ -49,24 +49,16 @@
 }
 
 /*
- * Explicit theme override, driven by the `theme` setting via
- * `document.documentElement.dataset.theme`. When set, the higher-specificity
- * attribute selectors win over the `prefers-color-scheme` media query above,
- * so a user can keep Handy light or dark regardless of the OS setting.
- * `system` (or no attribute) leaves the OS in charge.
+ * The app is dark, whatever the OS is set to: `data-theme="dark"` is in the
+ * markup of both documents and re-applied before React mounts, and this
+ * higher-specificity selector wins over the `prefers-color-scheme` query above.
+ * There is no light form and no setting — the appearance picker is gone and the
+ * settings migration folds any stored `theme` onto `dark` on load. The media
+ * query stays as the fallback for a document that somehow lacks the attribute.
  *
  * Lives here (not in App.css) so every window that imports the shared palette —
- * the settings window and the recording overlay alike — honours the override.
+ * the settings window and the recording overlay alike — gets it.
  */
-:root[data-theme="light"] {
-  --color-text: var(--light-color-text);
-  --color-background: var(--light-color-background);
-  --color-logo-primary: var(--light-color-logo-primary);
-  --color-logo-stroke: var(--light-color-logo-stroke);
-  --color-warning: var(--light-color-warning);
-  --color-error: var(--light-color-error);
-}
-
 :root[data-theme="dark"] {
   --color-text: var(--dark-color-text);
   --color-background: var(--dark-color-background);

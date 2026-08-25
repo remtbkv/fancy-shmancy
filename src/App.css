@@ -1,6 +1,11 @@
 @import "tailwindcss";
 @import "./styles/theme.css";
 
+/* Tailwind's `dark:` follows the OS by default, which is no longer what "dark"
+   means here — the app forces `data-theme="dark"` whatever the Mac is set to.
+   Point the variant at the attribute so the two agree. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 /* Register the shared color tokens (src/styles/theme.css) as Tailwind
    utilities */
 @theme inline {
@@ -54,11 +59,12 @@
   text-align: center;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    /* Just a bit darker than the (already dark) background, keeping its warm tint */
-    --color-log-surface: color-mix(in srgb, var(--color-background), black 15%);
-  }
+/* Just a bit darker than the (already dark) background, keeping its warm tint.
+   Keyed off the forced attribute, not the OS: the app is dark on a light Mac
+   too, and the light formula there left the log console lighter than the page
+   behind it. */
+:root[data-theme="dark"] {
+  --color-log-surface: color-mix(in srgb, var(--color-background), black 15%);
 }
 
 /* macOS - tint native overlay scrollbar thumb */
