@@ -173,7 +173,11 @@ export const SettingContainer: React.FC<SettingContainerProps> = ({
             </div>
           </div>
         </div>
-        <div className="relative">{children}</div>
+        {/* min-w-0: without it a flex item refuses to shrink below its content,
+          so a row whose control carries a long value (a chosen folder path)
+          pushes the rest of itself out past the card edge instead of the value
+          giving way. */}
+        <div className="relative min-w-0">{children}</div>
       </div>
     );
   }
@@ -188,7 +192,11 @@ export const SettingContainer: React.FC<SettingContainerProps> = ({
           {description}
         </p>
       </div>
-      <div className="relative">{children}</div>
+      {/* min-w-0: without it a flex item refuses to shrink below its content,
+          so a row whose control carries a long value (a chosen folder path)
+          pushes the rest of itself out past the card edge instead of the value
+          giving way. */}
+      <div className="relative min-w-0">{children}</div>
     </div>
   );
 };
