@@ -204,13 +204,6 @@ export const SystemPage: React.FC = () => {
         />
       </GroupCard>
 
-      <GroupCard title={t("settings.modal.groups.updates")}>
-        <ToggleRow
-          settingKey="update_checks_enabled"
-          title={t("settings.debug.updateChecks.label")}
-          fallback
-        />
-      </GroupCard>
     </>
   );
 };

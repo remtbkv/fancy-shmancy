@@ -650,8 +650,11 @@ fn default_autostart_enabled() -> bool {
     false
 }
 
+// The updater endpoint in tauri.conf.json is UPSTREAM Handy's release feed —
+// on this fork an accepted "update" would replace the app with vanilla Handy.
+// Until the fork has its own feed, checking is never the right call.
 fn default_update_checks_enabled() -> bool {
-    true
+    false
 }
 
 fn default_show_whats_new_on_update() -> bool {
@@ -1398,6 +1401,13 @@ fn apply_settings_migrations(
     }
     if !settings.filler_word_removal_enabled {
         settings.filler_word_removal_enabled = true;
+        updated = true;
+    }
+
+    // The updater endpoint is upstream Handy's feed; on this fork an accepted
+    // "update" replaces the app with vanilla Handy. Never check.
+    if settings.update_checks_enabled {
+        settings.update_checks_enabled = false;
         updated = true;
     }
 
