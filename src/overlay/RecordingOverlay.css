@@ -3,22 +3,23 @@
 /* ============================================================
    Flow-bar tokens — the recording pill matches Wispr Flow's status bar, so
    its geometry, colours, easing curves and keyframes are measured values
-   rather than anything derived from this app's theme. Light/dark flip the
-   same two tokens Wispr flips.
+   rather than anything derived from this app's theme.
+
+   The bar is dark in every appearance, and the tokens are declared on `.wpill`
+   rather than `:root` so that stays true. Two reasons, both learned the hard
+   way: the reference bar itself has no light form (`Flowbar.svg`, Wispr's own
+   asset, is #1A1A1A with near-white bars), and on macOS the app's appearance
+   reaches this window as `prefers-color-scheme` — `NSApp.appearance` is
+   app-wide — so anything keyed on the theme here repaints the pill the moment
+   the app is set to Light. Scoping the tokens to the pill also means nothing
+   declared upstream of this file (theme.css is imported above) can reach them.
    ============================================================ */
-:root {
+.wpill {
   --w-surface: #000; /* pill fill */
   --w-ink: #fff; /* waveform + label */
   --w-hairline: #30302f; /* 1px pill border */
   /* The one curve the bar moves on. */
   --w-ease: cubic-bezier(0.05, 0.6, 0.4, 0.95);
-}
-@media (prefers-color-scheme: light) {
-  :root {
-    --w-surface: #deddd7;
-    --w-ink: #1a1a1a;
-    --w-hairline: #c8c8c2;
-  }
 }
 
 :root {
@@ -89,22 +90,12 @@
 }
 
 /*
- * Explicit theme override, matching the `data-theme` blocks in theme.css.
- * `--s-surface` and `--s-accent` honour the setting for free because they derive
- * from shared palette tokens, but the neutrals above are chosen here, so without
- * this block a forced theme on a differently-themed OS mixes the two — e.g. dark
- * surface with light-theme secondary text at ~2.8:1 contrast. macOS masks that
- * (setting the app appearance flips the webview's `prefers-color-scheme` to
- * match), so this is what Windows and Linux need.
+ * The forced dark palette, matching the `data-theme` block in theme.css.
+ * `--s-surface` honours it for free because it derives from a shared palette
+ * token, but the neutrals above are chosen here — so on a Mac set to Light,
+ * where this webview's `prefers-color-scheme` reads light, the panel would
+ * otherwise pair a dark surface with light-theme secondary text at ~2.8:1.
  */
-:root[data-theme="light"] {
-  --s-accent-soft: var(--light-s-accent-soft);
-  --s-muted: var(--light-s-muted);
-  --s-faint: var(--light-s-faint);
-  --s-border: var(--light-s-border);
-  --s-hair: var(--light-s-hair);
-}
-
 :root[data-theme="dark"] {
   --s-accent-soft: var(--dark-s-accent-soft);
   --s-muted: var(--dark-s-muted);
