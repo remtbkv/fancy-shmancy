@@ -86,6 +86,13 @@ export function installTauriStub(fixtures) {
   };
 
   window.__TAURI_INTERNALS__ = {
+    // `getCurrentWebviewWindow()` reads this synchronously at module scope.
+    // Without it the history list's audio player throws on mount and takes the
+    // whole page down, which looks like a UI bug and is not one.
+    metadata: {
+      currentWindow: { label: "main" },
+      currentWebview: { label: "main", windowLabel: "main" },
+    },
     invoke: (cmd, args) => {
       const handler = handlers[cmd];
       if (handler) return handler(args ?? {});

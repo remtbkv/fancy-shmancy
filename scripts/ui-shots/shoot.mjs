@@ -1,10 +1,9 @@
 /**
- * Headless screenshots + geometry checks for the ported UI.
+ * Headless screenshots + checks for the settings window.
  *
- * Renders the app against a stubbed Tauri IPC in a browser at the reference's
- * 1350x850 and 2x, so nothing is launched and no window appears on anyone's
- * screen. Writes ~/handy-review/ui-port/<screen>.png and prints the
- * measurements the port is supposed to hit.
+ * Renders the app against a stubbed Tauri IPC in a browser, so nothing is
+ * launched and no window appears on anyone's screen. Writes
+ * ~/handy-review/ui-port/reverted-<screen>.png and prints what it checked.
  *
  * One shot per screen, not one per appearance: the app is dark and has no theme
  * setting. The browser context is deliberately given `colorScheme: "light"` so
@@ -23,7 +22,10 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = join(homedir(), "handy-review/ui-port");
 const BASE = "http://localhost:1420";
-const VIEWPORT = { width: 1350, height: 850 };
+// The window lib.rs opens, which is also its minimum — so every row is measured
+// at the narrowest it is ever drawn.
+const VIEWPORT = { width: 680, height: 570 };
+const WIDE = { width: 1000, height: 760 };
 const CHECK_ONLY = process.argv.includes("--check");
 
 const fixtures = JSON.parse(readFileSync(join(HERE, "fixtures.json"), "utf8"));
@@ -38,301 +40,114 @@ const record = (name, value, expected) => {
   results.push({ name, value, expected, pass });
 };
 
-async function newPage(
-  browser,
-  theme,
-  viewport = VIEWPORT,
-  fx = fixtures,
-  os = "macos",
-) {
+async function newPage(browser, viewport = VIEWPORT, fx = fixtures) {
   const context = await browser.newContext({
     viewport,
     deviceScaleFactor: 2,
-    colorScheme: theme,
+    // Light at the OS level, on purpose: the app must be dark anyway.
+    colorScheme: "light",
     reducedMotion: "no-preference",
   });
   const page = await context.newPage();
   await page.addInitScript(
-    ({ src, fx, os }) => {
+    ({ src, fx }) => {
       // eslint-disable-next-line no-eval
       eval(src);
       // eslint-disable-next-line no-undef
       installTauriStub(fx);
-      window.__TAURI_OS_PLUGIN_INTERNALS__.platform = os;
-      window.__TAURI_OS_PLUGIN_INTERNALS__.os_type = os;
     },
-    { src: stubSource, fx, os },
+    { src: stubSource, fx },
   );
   return page;
 }
 
 async function gotoApp(page) {
   await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
-  await page.waitForSelector("nav", { timeout: 15000 });
+  await page.waitForSelector("text=General", { timeout: 15000 });
   await page.waitForTimeout(400);
 }
 
 const shot = async (page, name) => {
   if (CHECK_ONLY) return;
-  await page.screenshot({ path: join(OUT, `${name}.png`) });
-  process.stdout.write(`  ${name}.png\n`);
+  await page.screenshot({ path: join(OUT, `reverted-${name}.png`) });
+  process.stdout.write(`  reverted-${name}.png\n`);
 };
 
 /** Click a sidebar entry by its visible label. */
 const nav = async (page, label) => {
-  await page.getByRole("button", { name: label, exact: true }).first().click();
-  await page.waitForTimeout(350);
+  await page.locator(`div.cursor-pointer:has(> p:text-is("${label}"))`).click();
+  await page.waitForTimeout(400);
 };
 
-/** Open the settings sheet and land on one of its four pages, by index. */
-async function openSettings(page, index) {
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.waitForSelector('[role="dialog"]');
-  await page.waitForTimeout(400);
-  // By position, not by label: the accessible name of "History & Storage"
-  // does not survive role-name matching, and the order is the contract anyway.
-  await page.locator('[role="dialog"] nav button').nth(index).click();
-  await page.waitForTimeout(300);
-}
+const pageText = (page) => page.evaluate(() => document.body.textContent ?? "");
 
-async function shootApp(browser) {
-  // Light at the OS level, on purpose — see the file header.
-  const page = await newPage(browser, "light");
+/**
+ * Every settings section, shot and swept for the rows Rem asked to be gone.
+ * They live on three different pages, so the assertion is over the text of all
+ * of them combined.
+ */
+async function shootSections(browser) {
+  const page = await newPage(browser);
   await gotoApp(page);
 
-  await shot(page, "home");
-  await measureHome(page);
   await checkForcedDark(page);
 
-  await nav(page, "Dictionary");
-  await shot(page, "dictionary");
-
-  await nav(page, "Models");
-  await page.waitForTimeout(500);
-  await shot(page, "models");
-  await checkModels(page);
-
-  await nav(page, "About");
-  await shot(page, "about");
-  await checkAboutRowsGone(page);
-
-  await nav(page, "Dictation");
-  await measureModalEnter(page);
-
-  const slugs = ["general", "system", "storage", "advanced"];
-  let allPagesText = "";
-  for (let i = 0; i < slugs.length; i++) {
-    if (i === 0) await openSettings(page, i);
-    else {
-      await page.locator('[role="dialog"] nav button').nth(i).click();
-      await page.waitForTimeout(300);
+  let allText = "";
+  for (const [label, slug] of [
+    ["General", "general"],
+    ["History", "history"],
+    ["Models", "models"],
+    ["Advanced", "advanced"],
+    ["About", "about"],
+  ]) {
+    await nav(page, label);
+    if (slug === "models") await page.waitForTimeout(600);
+    await shot(page, slug);
+    await checkNoOverflow(page, slug, VIEWPORT.width);
+    if (slug === "models") await checkModels(page);
+    if (slug === "advanced") {
+      await checkOverlayOptions(page);
+      await checkPathRow(page, VIEWPORT.width, false);
     }
-    await shot(page, `settings-${slugs[i]}`);
-    await checkNoOverflow(page, slugs[i], VIEWPORT.width);
-    if (slugs[i] === "system") await checkOverlayRow(page);
-    if (slugs[i] === "storage") await checkPathTail(page, "1350", true);
-    allPagesText += await page.evaluate(
-      () => document.querySelector('[role="dialog"]').textContent ?? "",
-    );
+    allText += await pageText(page);
   }
 
-  await checkSettingsPages(page);
-  checkRetiredRowsGone(allPagesText);
-  await checkNoGold(page);
+  checkRetiredRowsGone(allText);
+  await page.context().close();
+}
 
+/** The same rows in a window with room to spare: the path must be whole here. */
+async function shootWide(browser) {
+  const page = await newPage(browser, WIDE);
+  await gotoApp(page);
+  await nav(page, "Advanced");
+  await shot(page, "advanced-wide");
+  await checkNoOverflow(page, "advanced", WIDE.width);
+  await checkPathRow(page, WIDE.width, true);
   await page.context().close();
 }
 
 /**
- * The same four pages in a window at the app's minimum size (680x570, from
- * `lib.rs`). The sheet is capped at `100vw - 32`, so this is the narrowest a
- * SettingRow ever gets — where a value that will not shrink pushes the row's
- * control out of the card.
+ * The Debug section, which the fixture store has switched off — and where the
+ * update-checks toggle used to live.
  */
-async function shootNarrow(browser) {
-  const page = await newPage(browser, "light", { width: 680, height: 570 });
+async function shootDebug(browser) {
+  const fx = {
+    ...fixtures,
+    settings: { ...fixtures.settings, debug_mode: true },
+  };
+  const page = await newPage(browser, WIDE, fx);
   await gotoApp(page);
-  for (let i = 0; i < 4; i++) {
-    if (i === 0) await openSettings(page, i);
-    else {
-      await page.locator('[role="dialog"] nav button').nth(i).click();
-      await page.waitForTimeout(300);
-    }
-    const slug = ["general", "system", "storage", "advanced"][i];
-    await checkNoOverflow(page, slug, 680);
-    if (slug === "storage") {
-      await shot(page, "settings-storage-narrow");
-      await checkPathTail(page, "680", false);
-    }
-  }
-  await page.context().close();
-}
-
-async function measureHome(page) {
-  const m = await page.evaluate(() => {
-    const card = document.querySelector("main > div");
-    const cardBox = card.getBoundingClientRect();
-    const rows = [...document.querySelectorAll("main .group")];
-    const first = rows[0]?.getBoundingClientRect();
-    const second = rows[1]?.getBoundingClientRect();
-    const stamp = rows[0]?.firstElementChild;
-    const eyebrow = document.querySelector("main .uppercase");
-    return {
-      cardPadding: parseFloat(getComputedStyle(card).paddingLeft),
-      cardRadius: parseFloat(getComputedStyle(card).borderTopLeftRadius),
-      cardBg: getComputedStyle(card).backgroundColor,
-      rowHeight: first ? Math.round(first.height) : null,
-      rowPitch: first && second ? Math.round(second.top - first.top) : null,
-      stampWidth: stamp
-        ? Math.round(stamp.getBoundingClientRect().width)
-        : null,
-      stampSize: stamp ? getComputedStyle(stamp).fontSize : null,
-      eyebrowSize: eyebrow ? getComputedStyle(eyebrow).fontSize : null,
-      eyebrowTracking: eyebrow ? getComputedStyle(eyebrow).letterSpacing : null,
-      eyebrowToRow:
-        eyebrow && first
-          ? Math.round(first.top - eyebrow.getBoundingClientRect().bottom)
-          : null,
-      sidebarWidth: Math.round(
-        document.querySelector("nav").getBoundingClientRect().width,
-      ),
-      // The two fixture rows with no transcript must say something.
-      emptyRowText: rows
-        .map((r) => r.children[1]?.textContent?.trim())
-        .filter((t) => t === "Cancelled" || t === "Transcription failed"),
-      greetingGone: !document.body.textContent.includes(
-        "Get back into the flow",
-      ),
-      statsLine: document.querySelector("main p")?.textContent?.trim() ?? null,
-      cardLeft: Math.round(cardBox.left),
-    };
-  });
-
-  record("home: sidebar width", m.sidebarWidth, 216);
-  record("home: card padding", m.cardPadding, 40);
-  record("home: card radius", m.cardRadius, 24);
-  record("home: row height", m.rowHeight, 53);
-  record("home: row pitch", m.rowPitch, 53);
-  record("home: timestamp column", m.stampWidth, 97);
-  record("home: timestamp size", m.stampSize, "13px");
-  record("home: eyebrow size", m.eyebrowSize, "12px");
-  record("home: eyebrow tracking", m.eyebrowTracking, "0.96px");
-  record("home: eyebrow ink -> first row", m.eyebrowToRow);
-  record("home: greeting removed", m.greetingGone, "true");
-  record("home: stats line", m.statsLine);
-  record("home: empty rows labelled", m.emptyRowText.length >= 2, "true");
-}
-
-async function checkModels(page) {
-  const m = await page.evaluate(() => {
-    const headings = [...document.querySelectorAll("main h2")].map((h) =>
-      h.textContent.trim(),
-    );
-    const names = [...document.querySelectorAll("main h3")].map((h) =>
-      h.textContent.trim(),
-    );
-    // Everything after the "available" heading is what is being offered.
-    const sections = [...document.querySelectorAll("main h2, main h3")];
-    const start = sections.findIndex(
-      (el) =>
-        el.tagName === "H2" &&
-        /Recommended|Available to Download/.test(el.textContent),
-    );
-    const offered =
-      start === -1
-        ? []
-        : sections
-            .slice(start + 1)
-            .filter((el) => el.tagName === "H3")
-            .map((el) => el.textContent.trim());
-    return { headings, names, offered };
-  });
-  // The downloaded Q8_0 is Cohere Transcribe; its catalog twin must not be
-  // offered underneath it.
-  const downloadedBase = m.names
-    .filter((n) => n.includes("(Q8_0)"))
-    .map((n) => n.replace(" (Q8_0)", ""));
-  const offeredTwins = downloadedBase.filter(
-    (base) => m.names.filter((n) => n === base).length > 0,
-  );
-  record("models: sections", m.headings.join(" | "));
-  record("models: cards", m.names.join(" | "));
-  record("models: downloaded twin re-offered", offeredTwins.length, 0);
-  // The fixture holds two of the three recommended models, so unbrowsed the
-  // download list is the remaining one and nothing else.
+  await nav(page, "Debug");
+  await page.waitForTimeout(400);
+  await shot(page, "debug");
+  const text = await pageText(page);
   record(
-    "models: offered without searching",
-    m.offered.join(" | "),
-    "Canary 180M Flash",
-  );
-}
-
-async function checkSettingsPages(page) {
-  const pages = await page.evaluate(() =>
-    [...document.querySelectorAll('[role="dialog"] nav button')].map((b) =>
-      b.textContent.trim(),
-    ),
-  );
-  record(
-    "settings: pages",
-    pages.join(" | "),
-    "General | System | History & Storage | Advanced",
-  );
-  const hasModelsGroup = await page.evaluate(() =>
-    document.body.textContent.includes("Models and performance"),
-  );
-  record("settings: engine rows on Advanced", hasModelsGroup, "true");
-
-  // A SettingRow's subtitle is the current value. A blank one means the row
-  // cannot read what is stored — which is how the unload-timeout spelling
-  // mismatch showed up in the first place.
-  const unload = await page.evaluate(() => {
-    const row = [...document.querySelectorAll('[role="dialog"] div')].find(
-      (d) => d.children[0]?.children[0]?.textContent?.trim() === "Unload Model",
-    );
-    return row?.children[0]?.children[1]?.textContent?.trim() ?? "(row absent)";
-  });
-  record("settings: unload row shows its value", unload || "(blank)");
-  record("settings: unload row not blank", Boolean(unload), "true");
-}
-
-/** The sheet has to be mid-transition partway through its enter, not already
- *  there — the bug was the transition being skipped, not being short. */
-async function measureModalEnter(page) {
-  const samples = await page.evaluate(async () => {
-    const sheet = () => document.querySelector('[role="dialog"]');
-    const btn = [...document.querySelectorAll("nav button")].find(
-      (b) => b.textContent.trim() === "Settings",
-    );
-    btn.click();
-    const readings = [];
-    const t0 = performance.now();
-    for (let i = 0; i < 24; i++) {
-      await new Promise((r) => requestAnimationFrame(r));
-      const el = sheet();
-      if (el) {
-        readings.push({
-          t: Math.round(performance.now() - t0),
-          opacity: parseFloat(getComputedStyle(el).opacity),
-          transform: getComputedStyle(el).transform,
-        });
-      }
-    }
-    return readings;
-  });
-  const mid = samples.filter((s) => s.opacity > 0.02 && s.opacity < 0.98);
-  const settled = samples.find((s) => s.opacity > 0.99);
-  record("modal: intermediate opacity frames", mid.length);
-  record("modal: animates (not a jump)", mid.length >= 3, "true");
-  record("modal: settled at ms", settled ? settled.t : "never");
-  record(
-    "modal: scale animates",
-    new Set(samples.map((s) => s.transform)).size > 2,
+    "removed: update-checks toggle",
+    !/Check for Updates|Automatic Updates/i.test(text),
     "true",
   );
-  // Close it again so the caller starts from a known state.
-  await page.keyboard.press("Escape");
-  await page.waitForTimeout(200);
+  await page.context().close();
 }
 
 /** The OS says light; the app must be dark anyway, and say so on the root. */
@@ -340,41 +155,165 @@ async function checkForcedDark(page) {
   const m = await page.evaluate(() => ({
     prefersDark: matchMedia("(prefers-color-scheme: dark)").matches,
     dataTheme: document.documentElement.dataset.theme ?? "(none)",
-    // The sidebar paints the canvas token; `body` is transparent, so reading it
-    // would pass on `rgba(0,0,0,0)` without proving anything.
-    canvas: getComputedStyle(document.querySelector("nav")).backgroundColor,
+    background: getComputedStyle(document.documentElement).backgroundColor,
   }));
   record("dark: OS preference is dark", m.prefersDark, "false");
   record("dark: data-theme", m.dataTheme, "dark");
-  // The dark canvas token; a light canvas would read near 245,244,241.
-  const channels = (m.canvas.match(/\d+/g) ?? []).map(Number).slice(0, 3);
-  record("dark: body background", m.canvas);
+  const channels = (m.background.match(/\d+/g) ?? []).map(Number).slice(0, 3);
+  record("dark: root background", m.background);
   record(
-    "dark: canvas is a dark value",
+    "dark: background is a dark value",
     channels.length === 3 && channels.every((c) => c < 90),
     "true",
   );
 }
 
 /**
- * Nothing inside the sheet may stick out of its parent. `truncate` on a flex
+ * The fixture store holds two of the three recommended models, so unbrowsed the
+ * download list is the remaining one and nothing else — and the downloaded
+ * Q8_0's catalog twin must not be offered underneath it.
+ */
+async function checkModels(page) {
+  const m = await page.evaluate(() => {
+    const headings = [...document.querySelectorAll("h2")];
+    const availableIdx = headings.findIndex((h) =>
+      /Available to Download/.test(h.textContent ?? ""),
+    );
+    const names = (root) =>
+      [...(root?.querySelectorAll("h3") ?? [])].map((h) =>
+        h.textContent.trim(),
+      );
+    // Each section is a `space-y-3` block holding its heading and its cards.
+    const section = (h) => h?.closest(".space-y-3");
+    return {
+      headings: headings.map((h) => h.textContent.trim()),
+      downloaded: names(section(headings[0])),
+      offered:
+        availableIdx === -1 ? [] : names(section(headings[availableIdx])),
+    };
+  });
+  record("models: sections", m.headings.join(" | "));
+  record("models: downloaded", m.downloaded.join(" | "));
+  record(
+    "models: offered without searching",
+    m.offered.join(" | "),
+    "Canary 180M Flash",
+  );
+}
+
+/**
+ * The overlay row: None and Live, no Minimal — and a stored "minimal" reads as
+ * Live, which is what the backend will have written by then.
+ */
+async function checkOverlayOptions(page) {
+  const handle = await page.evaluateHandle(() => {
+    const heading = [...document.querySelectorAll("h3")].find((h) =>
+      /Overlay/i.test(h.textContent ?? ""),
+    );
+    return heading?.closest(".flex.items-center.justify-between") ?? null;
+  });
+  const row = handle.asElement();
+  if (!row) {
+    record("overlay: row found", false, "true");
+    return;
+  }
+  const trigger = row.$("button");
+  const button = await trigger;
+  const shown = (await button.textContent())?.trim() ?? "(none)";
+  await button.click();
+  await page.waitForTimeout(250);
+  const options = await page.evaluate(() => {
+    const open = document.querySelector(".absolute.top-full");
+    return open
+      ? [...open.querySelectorAll("button")].map((b) => b.textContent.trim())
+      : [];
+  });
+  record("overlay: stored minimal reads as", shown, "Live");
+  record("overlay: options", options.join(" | "), "None | Live");
+  await page.mouse.click(5, 5);
+  await page.waitForTimeout(200);
+}
+
+/**
+ * The recordings-folder row. `strict` asserts the last path segment survives
+ * whole; at the app's minimum window width there is genuinely not room for it
+ * beside two buttons, so that run only reports what happened. What must hold at
+ * every width is that the buttons stay inside the card.
+ */
+async function checkPathRow(page, width, strict) {
+  // The row is below the fold on a 570-tall window; measuring it is fine either
+  // way, but the screenshot has to show it.
+  await page.evaluate(() => {
+    const heading = [...document.querySelectorAll("h3")].find(
+      (h) => h.textContent.trim() === "Recordings Folder",
+    );
+    heading?.scrollIntoView({ block: "center" });
+  });
+  await page.waitForTimeout(250);
+  await shot(page, `recordings-folder-${width}`);
+  const m = await page.evaluate(() => {
+    const heading = [...document.querySelectorAll("h3")].find(
+      (h) => h.textContent.trim() === "Recordings Folder",
+    );
+    const row = heading?.closest(".flex.items-center.justify-between");
+    const value = row?.querySelector("span[title]");
+    const parts = [...(value?.querySelectorAll("span") ?? [])];
+    const [head, tail] = parts;
+    // scrollWidth lies for an ellipsized inline flex item — Chrome lays the
+    // clipped text out to fit and reports the two as equal. A Range over the
+    // text nodes measures what the string actually wants.
+    const inkWidth = (el) => {
+      if (!el) return 0;
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      return range.getBoundingClientRect().width;
+    };
+    const buttons = [...(row?.querySelectorAll("button") ?? [])].filter((b) =>
+      /Choose|Default/.test(b.textContent ?? ""),
+    );
+    const card = row?.parentElement;
+    return {
+      found: Boolean(row),
+      tailText: tail?.textContent ?? "",
+      headTruncated: inkWidth(head) > (head?.clientWidth ?? 0) + 1,
+      tailTruncated: inkWidth(tail) > (tail?.clientWidth ?? 0) + 1,
+      buttonLabels: buttons.map((b) => b.textContent.trim()),
+      buttonsInside:
+        card && buttons.length
+          ? buttons.every(
+              (b) =>
+                b.getBoundingClientRect().right <=
+                card.getBoundingClientRect().right + 0.6,
+            )
+          : null,
+    };
+  });
+  record(`path @${width}: row found`, m.found, "true");
+  record(`path @${width}: tail segment`, m.tailText || "(none)");
+  record(`path @${width}: buttons`, m.buttonLabels.join(" | "));
+  record(`path @${width}: buttons inside the card`, m.buttonsInside, "true");
+  record(`path @${width}: head gives way first`, m.headTruncated, "true");
+  if (strict) record(`path @${width}: tail whole`, !m.tailTruncated, "true");
+  else record(`path @${width}: tail also clipped`, m.tailTruncated);
+}
+
+/**
+ * Nothing on a settings page may stick out of its parent. `truncate` on a flex
  * child only works when every ancestor between it and the row is `min-w-0`,
- * which is the class of bug this catches — the row's title was the one that
- * escaped.
+ * which is the class of bug this catches.
  */
 async function checkNoOverflow(page, slug, width) {
   const spills = await page.evaluate(() => {
-    const dialog = document.querySelector('[role="dialog"]');
     const out = [];
-    for (const el of dialog.querySelectorAll("*")) {
+    for (const el of document.querySelectorAll("body *")) {
       const parent = el.parentElement;
       if (!parent) continue;
+      const style = getComputedStyle(el);
+      if (style.position === "absolute" || style.position === "fixed") continue;
+      if (getComputedStyle(parent).overflowX !== "visible") continue;
       const box = el.getBoundingClientRect();
       const parentBox = parent.getBoundingClientRect();
-      // A scroll container is allowed to be taller than its parent; only
-      // horizontal escape is the bug here.
-      if (getComputedStyle(parent).overflowX !== "visible") continue;
-      if (!box.width) continue;
+      if (!box.width || !parentBox.width) continue;
       if (
         box.right > parentBox.right + 0.6 ||
         box.left < parentBox.left - 0.6
@@ -391,167 +330,48 @@ async function checkNoOverflow(page, slug, width) {
   if (spills.length) results.at(-1).detail = spills;
 }
 
-/**
- * The point of middle-truncating a path: the folder name survives while the
- * `/Users/you/Library/...` prefix goes. `strict` asserts the tail is whole; at
- * the app's minimum window width there is genuinely not room for it beside two
- * buttons, so that run only reports what happened.
- */
-async function checkPathTail(page, label, strict) {
-  const m = await page.evaluate(() => {
-    const row = [...document.querySelectorAll('[role="dialog"] div')].find(
-      (d) =>
-        d.children[0]?.children[0]?.textContent?.trim() === "Recordings Folder",
-    );
-    const value = row?.children[0]?.children[1];
-    const parts = [...(value?.querySelectorAll("span") ?? [])];
-    const [head, tail] = [parts[1], parts[2]];
-    // scrollWidth lies for an ellipsized inline flex item — Chrome lays the
-    // clipped text out to fit and reports the two as equal. A Range over the
-    // text nodes measures what the string actually wants.
-    const inkWidth = (el) => {
-      if (!el) return 0;
-      const range = document.createRange();
-      range.selectNodeContents(el);
-      return range.getBoundingClientRect().width;
-    };
-    const card = row?.parentElement;
-    const buttons = row?.children[1];
-    return {
-      headText: head?.textContent ?? "",
-      tailText: tail?.textContent ?? "",
-      headTruncated: inkWidth(head) > (head?.clientWidth ?? 0) + 1,
-      tailTruncated: inkWidth(tail) > (tail?.clientWidth ?? 0) + 1,
-      buttonsInside:
-        card && buttons
-          ? buttons.getBoundingClientRect().right <=
-            card.getBoundingClientRect().right + 0.6
-          : null,
-    };
-  });
-  record(`path @${label}: tail segment`, m.tailText || "(none)");
-  record(`path @${label}: head gives way first`, m.headTruncated, "true");
-  record(`path @${label}: buttons inside the card`, m.buttonsInside, "true");
-  if (strict) record(`path @${label}: tail whole`, !m.tailTruncated, "true");
-  else record(`path @${label}: tail also clipped`, m.tailTruncated);
-}
-
-/**
- * Rows Rem asked to be gone must be gone, not merely defaulted — and each lives
- * on a different page, so this asserts over the text of all four combined.
- */
-function checkRetiredRowsGone(allPagesText) {
-  const absent = (needle) => !allPagesText.includes(needle);
+/** Rows Rem asked to be gone must be gone, not merely defaulted. */
+function checkRetiredRowsGone(allText) {
+  const absent = (needle) => !allText.includes(needle);
   record("removed: Application Theme row", absent("Application Theme"), "true");
   record("removed: What's New row", absent("What's New"), "true");
+  record(
+    "removed: Support Development row",
+    absent("Support Development"),
+    "true",
+  );
   record("removed: Experimental row", absent("Experimental"), "true");
   record(
     "removed: Voice Activity Detection row",
     absent("Voice Activity Detection"),
     "true",
   );
-  record("removed: Remove filler words row", absent("filler"), "true");
-}
-
-/** The System page's Overlay row, whose fixture value is the retired "minimal". */
-async function checkOverlayRow(page) {
-  const m = await page.evaluate(() => {
-    const row = [...document.querySelectorAll('[role="dialog"] div')].find(
-      (d) => d.children[0]?.children[0]?.textContent?.trim() === "Overlay",
-    );
-    const options = [
-      ...document.querySelectorAll('[role="dialog"] option'),
-    ].map((o) => o.textContent.trim());
-    return {
-      value: row?.children[0]?.children[1]?.textContent?.trim() ?? "(no row)",
-      options,
-    };
-  });
-  record("overlay: stored minimal reads as", m.value, "Live");
-  if (m.options.length) record("overlay: options", m.options.join(" | "));
-}
-
-/** Same three, on the main window's About page. */
-async function checkAboutRowsGone(page) {
-  const text = await page.evaluate(() => document.body.textContent ?? "");
-  record("about: theme row gone", text.includes("Application Theme"), "false");
-  record("about: what's new row gone", text.includes("What's New"), "false");
+  record("removed: filler-word row", absent("Filler"), "true");
   record(
-    "about: support development gone",
-    text.includes("Support Development"),
-    "false",
+    "kept: Application Language row",
+    allText.includes("Application Language"),
+    "true",
   );
 }
 
-/** No pixel anywhere should still be the old brand gold. */
-async function checkNoGold(page) {
-  const hits = await page.evaluate(() => {
-    const golds = ["168, 128, 31", "224, 190, 99"];
-    const found = [];
-    for (const el of document.querySelectorAll("*")) {
-      const s = getComputedStyle(el);
-      for (const prop of [
-        "color",
-        "backgroundColor",
-        "borderTopColor",
-        "fill",
-      ]) {
-        const v = s[prop];
-        if (golds.some((g) => v && v.includes(g))) {
-          found.push(
-            `${el.tagName}.${el.className}`.slice(0, 60) + ` ${prop}=${v}`,
-          );
-        }
-      }
-    }
-    return found.slice(0, 10);
-  });
-  record("gold: computed-style hits", hits.length, 0);
-  if (hits.length) results.at(-1).detail = hits;
-}
-
-/**
- * First run: onboarding un-done and nothing on disk, so the model step shows
- * the curated set and nothing else.
- *
- * Reported as Linux, which is not cosmetic. `AccessibilityOnboarding`'s mount
- * effect depends on `onComplete`, and App.tsx passes an unmemoized callback, so
- * on macOS the two re-trigger each other until the parent unmounts the
- * component ~300ms later. In the app that is a burst nobody sees; headless it
- * exceeds React's update depth and takes the tab down. Linux takes the branch
- * that skips permissions entirely, which is the same model step. (The loop is
- * pre-existing and untouched by this round.)
- */
-async function shootOnboarding(browser) {
-  const fresh = {
-    ...fixtures,
-    settings: { ...fixtures.settings, onboarding_completed: false },
-    models: fixtures.models
-      .filter((m) => !m.name.includes("(Q8_0)"))
-      .map((m) => ({ ...m, is_downloaded: false })),
-  };
-  const page = await newPage(browser, "light", VIEWPORT, fresh, "linux");
-  await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
-  await page.waitForTimeout(800);
-  await shot(page, "onboarding-models");
-
-  const offered = await page.evaluate(() =>
-    [...document.querySelectorAll("h3")].map((h) => h.textContent.trim()),
-  );
-  record(
-    "onboarding: the curated set",
-    offered.join(" | "),
-    "Cohere Transcribe | Canary 1B Flash | Canary 180M Flash",
-  );
-  await page.context().close();
-}
-
-/** The recording pill: black fill, white bars, in both appearances and with the
- *  app theme forced either way. */
+/** The recording pill: black fill, white bars, whatever the OS is set to. */
 async function shootOverlay(browser) {
   for (const theme of ["light", "dark"]) {
-    const page = await newPage(browser, theme);
-    await page.setViewportSize({ width: 420, height: 140 });
+    const context = await browser.newContext({
+      viewport: { width: 420, height: 140 },
+      deviceScaleFactor: 2,
+      colorScheme: theme,
+    });
+    const page = await context.newPage();
+    await page.addInitScript(
+      ({ src, fx }) => {
+        // eslint-disable-next-line no-eval
+        eval(src);
+        // eslint-disable-next-line no-undef
+        installTauriStub(fx);
+      },
+      { src: stubSource, fx: fixtures },
+    );
     await page.goto(`${BASE}/src/overlay/index.html`, {
       waitUntil: "networkidle",
     });
@@ -579,27 +399,26 @@ async function shootOverlay(browser) {
       channels.length === 3 &&
       channels.every((c) => Number(c) === 1 || Number(c) === 255);
     record(
-      `flow bar (${theme}, data-theme=${colors.dataTheme}): pill`,
+      `flow bar (OS ${theme}, data-theme=${colors.dataTheme}): pill`,
       colors.pill,
       "rgb(0, 0, 0)",
     );
-    record(`flow bar (${theme}): bars are white`, isWhite, "true");
+    record(`flow bar (OS ${theme}): bars are white`, isWhite, "true");
     if (!CHECK_ONLY) {
       await page.screenshot({
-        path: join(OUT, `flowbar-${theme}.png`),
-        omitBackground: false,
+        path: join(OUT, `reverted-flowbar-${theme}.png`),
       });
-      process.stdout.write(`  flowbar-${theme}.png\n`);
+      process.stdout.write(`  reverted-flowbar-${theme}.png\n`);
     }
-    await page.context().close();
+    await context.close();
   }
 }
 
 const browser = await chromium.launch();
 await mkdir(OUT, { recursive: true });
-await shootApp(browser);
-await shootNarrow(browser);
-await shootOnboarding(browser);
+await shootSections(browser);
+await shootWide(browser);
+await shootDebug(browser);
 await shootOverlay(browser);
 await browser.close();
 
