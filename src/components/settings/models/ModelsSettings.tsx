@@ -30,6 +30,20 @@ const modelSupportsLanguage = (model: ModelInfo, langCode: string): boolean => {
 const isLegacyModel = (model: ModelInfo): boolean =>
   typeof model.source === "object" && "Url" in model.source;
 
+/**
+ * What counts as "the same model" across quantizations.
+ *
+ * A catalog model surfaces once per quant file, each with its own id
+ * (`{repo_id}/{filename}`) and a name that carries the quant — so a Q8_0 of
+ * Cohere Transcribe sitting on disk and the catalog's default download are two
+ * `ModelInfo`s of one model. Keying on the Hugging Face repo collapses them,
+ * which is what stops a model you already have from being offered again.
+ */
+const modelKey = (model: ModelInfo): string =>
+  typeof model.source === "object" && "HuggingFace" in model.source
+    ? model.source.HuggingFace.repo_id
+    : model.id;
+
 export const ModelsSettings: React.FC = () => {
   const { t } = useTranslation();
   const [switchingModelId, setSwitchingModelId] = useState<string | null>(null);
@@ -193,6 +207,15 @@ export const ModelsSettings: React.FC = () => {
     });
   }, [models, languageFilter, filterStreaming, filterTranslation, searchQuery]);
 
+  // Whether the user has narrowed the catalog at all. Until they do, the
+  // download list is the three recommended models and nothing else — the other
+  // 60-odd are reachable, but by asking for them.
+  const isBrowsing =
+    searchQuery.trim().length > 0 ||
+    filterStreaming ||
+    filterTranslation ||
+    languageFilter !== "all";
+
   // Split filtered models into downloaded (including custom) and available sections
   const { downloadedModels, availableModels } = useMemo(() => {
     const downloaded: ModelInfo[] = [];
@@ -219,11 +242,25 @@ export const ModelsSettings: React.FC = () => {
       return 0;
     });
 
+    // Anything already on disk drops out of the download list, including the
+    // other quantizations of it: offering a 1.6 GB download of a model whose
+    // Q8_0 is sitting two rows above is the redundancy this fixes.
+    const held = new Set(downloaded.map(modelKey));
+
     return {
       downloadedModels: downloaded,
-      availableModels: available,
+      availableModels: available.filter(
+        (model) =>
+          !held.has(modelKey(model)) && (isBrowsing || model.is_recommended),
+      ),
     };
-  }, [filteredModels, downloadingModels, extractingModels, currentModel]);
+  }, [
+    filteredModels,
+    downloadingModels,
+    extractingModels,
+    currentModel,
+    isBrowsing,
+  ]);
 
   if (loading) {
     return (
@@ -423,9 +460,16 @@ export const ModelsSettings: React.FC = () => {
         {/* Available Models Section */}
         {availableModels.length > 0 && (
           <div className="space-y-3">
-            <h2 className="text-sm font-medium text-text/60">
-              {t("settings.models.availableModels")}
-            </h2>
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 className="text-sm font-medium text-text/60">
+                {t("settings.models.availableModels")}
+              </h2>
+              {!isBrowsing && (
+                <p className="text-xs text-text/40">
+                  {t("settings.models.searchForMore")}
+                </p>
+              )}
+            </div>
             {availableModels.map((model: ModelInfo) => (
               <ModelCard
                 key={model.id}
@@ -437,7 +481,8 @@ export const ModelsSettings: React.FC = () => {
                 onCancel={handleModelCancel}
                 downloadProgress={getDownloadProgress(model.id)}
                 downloadSpeed={getDownloadSpeed(model.id)}
-                showRecommended={true}
+                // Redundant when the whole section is the recommended set.
+                showRecommended={isBrowsing}
               />
             ))}
           </div>
