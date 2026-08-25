@@ -4,11 +4,6 @@
 /* Register the shared color tokens (src/styles/theme.css) as Tailwind
    utilities */
 @theme inline {
-  /* MOTION.md's enter time is the app's only transition length, so a bare
-     `transition-*` utility runs at 80ms instead of Tailwind's 150ms default.
-     Kept literal because @theme inlines the value. */
-  --default-transition-duration: 80ms;
-
   --color-text: var(--color-text);
   --color-background: var(--color-background);
   --color-background-ui: var(--color-background-ui);

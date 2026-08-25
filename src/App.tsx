@@ -11,18 +11,10 @@ import { ModelStateEvent, RecordingErrorEvent } from "./lib/types/events";
 import "./App.css";
 import AccessibilityPermissions from "./components/AccessibilityPermissions";
 import SecureInputWarning from "./components/SecureInputWarning";
+import Footer from "./components/footer";
 import Onboarding, { AccessibilityOnboarding } from "./components/onboarding";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { Sidebar, ShellPage } from "./components/Sidebar";
-import { HomePage, PageShell } from "./components/home";
-import { DictionaryPage } from "./components/dictionary";
-import {
-  AboutSettings,
-  DebugSettings,
-  ModelsSettings,
-} from "./components/settings";
-import SettingsModal from "./components/settings/SettingsModal";
-import { SoftCard } from "./components/ui";
+import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
 import { WhatsNewGate } from "./components/whats-new";
 import { useSettings } from "./hooks/useSettings";
 import { useSettingsStore } from "./stores/settingsStore";
@@ -30,6 +22,12 @@ import { commands } from "@/bindings";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
 
 type OnboardingStep = "accessibility" | "model" | "done";
+
+const renderSettingsContent = (section: SidebarSection) => {
+  const ActiveComponent =
+    SECTIONS_CONFIG[section]?.component || SECTIONS_CONFIG.general.component;
+  return <ActiveComponent />;
+};
 
 function App() {
   const { t, i18n } = useTranslation();
@@ -39,8 +37,8 @@ function App() {
   // Track if this is a returning user who just needs to grant permissions
   // (vs a new user who needs full onboarding including model selection)
   const [isReturningUser, setIsReturningUser] = useState(false);
-  const [currentPage, setCurrentPage] = useState<ShellPage>("dictation");
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [currentSection, setCurrentSection] =
+    useState<SidebarSection>("general");
   const { settings, updateSetting } = useSettings();
   const direction = getLanguageDirection(i18n.language);
   const refreshAudioDevices = useSettingsStore(
@@ -99,26 +97,6 @@ function App() {
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [settings?.debug_mode, updateSetting]);
-
-  // Escape dismisses the settings modal; its scrim handles the click case.
-  useEffect(() => {
-    if (!settingsOpen) return;
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setSettingsOpen(false);
-      }
-    };
-    document.addEventListener("keydown", handleEscape);
-    return () => document.removeEventListener("keydown", handleEscape);
-  }, [settingsOpen]);
-
-  // Debug is only reachable while the shortcut above has it switched on, so
-  // switching it back off must not strand the user on an empty page.
-  useEffect(() => {
-    if (currentPage === "debug" && !(settings?.debug_mode ?? false)) {
-      setCurrentPage("dictation");
-    }
-  }, [currentPage, settings?.debug_mode]);
 
   // Listen for recording errors from the backend and show a toast
   useEffect(() => {
@@ -295,35 +273,6 @@ function App() {
     />
   );
 
-  // Pages that are still the pre-port settings components keep their own
-  // layout inside the shared page chrome; the port restyles them in place.
-  const renderPage = () => {
-    switch (currentPage) {
-      case "dictionary":
-        return <DictionaryPage />;
-      case "models":
-        return (
-          <PageShell title={t("shell.models.title")}>
-            <ModelsSettings />
-          </PageShell>
-        );
-      case "about":
-        return (
-          <PageShell title={t("shell.about.title")}>
-            <AboutSettings />
-          </PageShell>
-        );
-      case "debug":
-        return (
-          <PageShell title={t("shell.debug.title")}>
-            <DebugSettings />
-          </PageShell>
-        );
-      default:
-        return <HomePage />;
-    }
-  };
-
   // Still checking onboarding status
   if (onboardingStep === null) {
     return null;
@@ -343,31 +292,30 @@ function App() {
     content = (
       <div
         dir={direction}
-        className="h-screen flex select-none cursor-default"
-        style={{ background: "var(--fs-canvas)" }}
+        className="h-screen flex flex-col select-none cursor-default"
       >
         <ErrorBoundary context="What's New">
           <WhatsNewGate />
         </ErrorBoundary>
-        <Sidebar
-          activePage={currentPage}
-          onNavigate={setCurrentPage}
-          onOpenSettings={() => setSettingsOpen(true)}
-        />
-        {/* The one content card: flush to the sidebar, 8 off the other edges,
-            below the 53px band the traffic lights sit in. */}
-        <main className="min-w-0 flex-1 pt-[var(--fs-titlebar-h)] pb-[8px] pe-[8px]">
-          <SoftCard className="flex h-full flex-col">
-            <AccessibilityPermissions />
-            <SecureInputWarning />
-            {/* Page swaps are instant — no cross-fade (MOTION.md). */}
-            {renderPage()}
-          </SoftCard>
-        </main>
-        <SettingsModal
-          open={settingsOpen}
-          onClose={() => setSettingsOpen(false)}
-        />
+        {/* Main content area that takes remaining space */}
+        <div className="flex-1 flex overflow-hidden">
+          <Sidebar
+            activeSection={currentSection}
+            onSectionChange={setCurrentSection}
+          />
+          {/* Scrollable content area */}
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="flex-1 overflow-y-auto">
+              <div className="flex flex-col items-center p-4 gap-4">
+                <AccessibilityPermissions />
+                <SecureInputWarning />
+                {renderSettingsContent(currentSection)}
+              </div>
+            </div>
+          </div>
+        </div>
+        {/* Fixed footer at bottom */}
+        <Footer />
       </div>
     );
   }

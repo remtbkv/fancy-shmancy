@@ -3,24 +3,22 @@
 /* ============================================================
    Flow-bar tokens — the recording pill matches Wispr Flow's status bar, so
    its geometry, colours, easing curves and keyframes are measured values
-   rather than anything derived from this app's theme.
-
-   The bar is dark in every appearance, and the tokens are declared on `.wpill`
-   rather than `:root` so that stays true. Two reasons, both learned the hard
-   way: the reference bar itself has no light form (`Flowbar.svg`, Wispr's own
-   asset, is #1A1A1A with near-white bars), and on macOS the app's appearance
-   setting reaches this window as `prefers-color-scheme` — `NSApp.appearance`
-   is app-wide — so anything keyed on the theme here repaints the pill the
-   moment someone switches the app to Light. Scoping the tokens to the pill
-   also means nothing declared upstream of this file (theme.css is imported
-   above) can reach them.
+   rather than anything derived from this app's theme. Light/dark flip the
+   same two tokens Wispr flips.
    ============================================================ */
-.wpill {
+:root {
   --w-surface: #000; /* pill fill */
   --w-ink: #fff; /* waveform + label */
   --w-hairline: #30302f; /* 1px pill border */
   /* The one curve the bar moves on. */
   --w-ease: cubic-bezier(0.05, 0.6, 0.4, 0.95);
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --w-surface: #deddd7;
+    --w-ink: #1a1a1a;
+    --w-hairline: #c8c8c2;
+  }
 }
 
 :root {
@@ -28,13 +26,8 @@
   /* Near-opaque app surface (theme.css --color-background at 98%). Auto-flips
      light/dark with --color-background, so no dark-mode override is needed. */
   --s-surface: color-mix(in srgb, var(--color-background) 98%, transparent);
-  /* Accent = the brand gold, written out rather than read from
-     --color-logo-primary. That token was repointed to ink when the app UI
-     dropped its accent hue (see theme.css); the overlay is not part of that
-     sweep and keeps the colours it shipped with. */
-  --light-s-accent: #a8801f;
-  --dark-s-accent: #e0be63;
-  --s-accent: var(--light-s-accent);
+  /* Accent = logo pink; flips automatically via --color-logo-primary. */
+  --s-accent: var(--color-logo-primary);
   /* Light/dark pairs for the tokens that can't flip through a shared palette
      variable on their own. Same shape as theme.css: each value is written once
      here, and the active token below is re-pointed by the media query or by the
@@ -48,7 +41,7 @@
      deeper UI pink. */
   --dark-s-accent-soft: color-mix(
     in srgb,
-    var(--dark-s-accent) 20%,
+    var(--color-logo-primary) 20%,
     transparent
   );
   /* Neutrals. muted/faint are overlay-specific secondary/tertiary text grays
@@ -87,7 +80,6 @@
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --s-accent: var(--dark-s-accent);
     --s-accent-soft: var(--dark-s-accent-soft);
     --s-muted: var(--dark-s-muted);
     --s-faint: var(--dark-s-faint);
@@ -98,16 +90,14 @@
 
 /*
  * Explicit theme override, matching the `data-theme` blocks in theme.css.
- * `--s-surface` honours the setting for free because it derives from a shared
- * palette token, but the accent and the neutrals above are chosen here, so
- * without this block a forced theme on a differently-themed OS mixes the two —
- * e.g. dark
+ * `--s-surface` and `--s-accent` honour the setting for free because they derive
+ * from shared palette tokens, but the neutrals above are chosen here, so without
+ * this block a forced theme on a differently-themed OS mixes the two — e.g. dark
  * surface with light-theme secondary text at ~2.8:1 contrast. macOS masks that
  * (setting the app appearance flips the webview's `prefers-color-scheme` to
  * match), so this is what Windows and Linux need.
  */
 :root[data-theme="light"] {
-  --s-accent: var(--light-s-accent);
   --s-accent-soft: var(--light-s-accent-soft);
   --s-muted: var(--light-s-muted);
   --s-faint: var(--light-s-faint);
@@ -116,7 +106,6 @@
 }
 
 :root[data-theme="dark"] {
-  --s-accent: var(--dark-s-accent);
   --s-accent-soft: var(--dark-s-accent-soft);
   --s-muted: var(--dark-s-muted);
   --s-faint: var(--dark-s-faint);

@@ -165,6 +165,9 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
 
   // Update status functions
   const getUpdateStatusText = () => {
+    if (!updateChecksEnabled) {
+      return t("footer.updateCheckingDisabled");
+    }
     if (isInstalling) {
       return downloadProgress > 0 && downloadProgress < 100
         ? t("footer.downloading", {
@@ -180,20 +183,15 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
     return t("footer.checkForUpdates");
   };
 
-  // With checks switched off there is nothing to say and nothing to click, so
-  // the component renders nothing at all rather than a standing label. The
-  // check/install wiring above is untouched — turning checks back on brings
-  // the status line back with it.
-  if (!updateChecksEnabled) return null;
-
   const getUpdateStatusAction = () => {
+    if (!updateChecksEnabled) return undefined;
     if (updateAvailable && !isInstalling) return installUpdate;
     if (!isChecking && !isInstalling && !updateAvailable)
       return handleManualUpdateCheck;
     return undefined;
   };
 
-  const isUpdateDisabled = isChecking || isInstalling;
+  const isUpdateDisabled = !updateChecksEnabled || isChecking || isInstalling;
   const isUpdateClickable =
     !isUpdateDisabled && (updateAvailable || (!isChecking && !showUpToDate));
 
@@ -222,7 +220,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
                 {t("common.close")}
               </button>
               <button
-                className="px-3 py-1.5 text-sm rounded bg-[var(--fs-ink)] text-[var(--fs-card)] hover:opacity-85 transition-opacity"
+                className="px-3 py-1.5 text-sm rounded bg-logo-primary text-white hover:bg-logo-primary/80 transition-colors"
                 onClick={() => {
                   openUrl(portableInstallerUrl);
                   setShowPortableUpdateDialog(false);

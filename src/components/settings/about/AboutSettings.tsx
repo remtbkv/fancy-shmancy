@@ -7,6 +7,8 @@ import { SettingContainer } from "../../ui/SettingContainer";
 import { Button } from "../../ui/Button";
 import { AppDataDirectory } from "../AppDataDirectory";
 import { AppLanguageSelector } from "../AppLanguageSelector";
+import { ShowWhatsNewOnUpdate } from "../ShowWhatsNewOnUpdate";
+import { ThemeSelector } from "../ThemeSelector";
 import { LogDirectory } from "../debug";
 
 export const AboutSettings: React.FC = () => {
@@ -27,10 +29,19 @@ export const AboutSettings: React.FC = () => {
     fetchVersion();
   }, []);
 
+  const handleDonateClick = async () => {
+    try {
+      await openUrl("https://handy.computer/donate");
+    } catch (error) {
+      console.error("Failed to open donate link:", error);
+    }
+  };
+
   return (
     <div className="max-w-3xl w-full mx-auto space-y-6">
       <SettingsGroup title={t("settings.about.title")}>
         <AppLanguageSelector descriptionMode="tooltip" grouped={true} />
+        <ThemeSelector descriptionMode="tooltip" grouped={true} />
         <SettingContainer
           title={t("settings.about.version.title")}
           description={t("settings.about.version.description")}
@@ -38,6 +49,18 @@ export const AboutSettings: React.FC = () => {
         >
           {/* eslint-disable-next-line i18next/no-literal-string */}
           <span className="text-sm font-mono">v{version}</span>
+        </SettingContainer>
+
+        <ShowWhatsNewOnUpdate descriptionMode="tooltip" grouped={true} />
+
+        <SettingContainer
+          title={t("settings.about.supportDevelopment.title")}
+          description={t("settings.about.supportDevelopment.description")}
+          grouped={true}
+        >
+          <Button variant="primary" size="md" onClick={handleDonateClick}>
+            {t("settings.about.supportDevelopment.button")}
+          </Button>
         </SettingContainer>
 
         <SettingContainer

@@ -26,7 +26,7 @@ export const Button: React.FC<ButtonProps> = ({
     primary:
       "text-white bg-background-ui border-background-ui hover:bg-background-ui/80 hover:border-background-ui/80 focus:ring-1 focus:ring-background-ui",
     "primary-soft":
-      "text-text bg-[var(--fs-quiet)] border-transparent hover:bg-[var(--fs-quiet-hover)] focus:ring-1 focus:ring-logo-primary",
+      "text-text bg-logo-primary/20 border-transparent hover:bg-logo-primary/30 focus:ring-1 focus:ring-logo-primary",
     secondary:
       "bg-mid-gray/10 border-mid-gray/20 hover:bg-background-ui/30 hover:border-logo-primary focus:outline-none",
     // Secondary's neutral resting look, but hover/focus use the semantic

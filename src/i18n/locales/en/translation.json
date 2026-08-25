@@ -260,9 +260,7 @@
         "label": "Rescan",
         "tooltip": "Rescan for models added to the models folder or Hugging Face cache outside Fancy Shmancy"
       },
-      "noModelsMatch": "No models match this filter.",
-      "availableRecommended": "Recommended",
-      "searchForMore": "Search to see every model."
+      "noModelsMatch": "No models match this filter."
     },
     "sound": {
       "title": "Sound",
@@ -684,65 +682,13 @@
           "details": "Local speech-to-text is built on transcribe.cpp and ggml. Thanks to the amazing work by Georgi Gerganov and contributors."
         }
       }
-    },
-    "modal": {
-      "title": "Settings",
-      "version": "Fancy Shmancy v{{version}}",
-      "pages": {
-        "system": "System",
-        "storage": "History & Storage"
-      },
-      "groups": {
-        "dictation": "Dictation",
-        "interface": "Interface",
-        "appSettings": "App settings",
-        "updates": "Updates",
-        "recordings": "Recordings",
-        "postProcessing": "Post-processing",
-        "modelsPerformance": "Models and performance"
-      },
-      "rows": {
-        "dictationLanguage": "Dictation Language",
-        "change": "Change",
-        "configure": "Configure",
-        "back": "Back",
-        "previewSound": "Preview sounds",
-        "percent": "{{value}}%",
-        "storageUsage": "{{used}} used · {{hours}} h kept · ≈{{perHour}} per hour, fits about {{capacity}} h",
-        "lastPasteTarget": "Last app pasted into",
-        "postProcessing": "AI post-processing"
-      },
-      "shortcuts": {
-        "reset": "Reset to default",
-        "hints": {
-          "transcribe": "Hold and speak.",
-          "transcribe_hands_free": "Press once to start, again to stop.",
-          "submit_transcription": "Finish the take and press Enter.",
-          "paste_last_transcript": "Paste the last thing you dictated.",
-          "cancel": "Drop the recording in progress."
-        }
-      },
-      "hints": {
-        "pttDoubleTapLock": "Double-tap to keep recording hands-free.",
-        "appLanguage": "Language of the app's own interface.",
-        "pausePlayback": "Pause music while you dictate, then start it again.",
-        "vad": "Filter silence out of recordings.",
-        "pasteWindow": "How recent the last transcript must be to be pasted.",
-        "typedOutApps": "Apps that get the transcript typed out, by bundle id.",
-        "fillerWords": "Drop hesitation words from transcriptions.",
-        "translateToEnglish": "Translate other languages to English as you dictate.",
-        "cancelOnEditingKeys": "Drop the take if an editing key is pressed.",
-        "editingCancelGrace": "How long the overlay waits before appearing.",
-        "postProcessing": "Refine transcripts with an LLM.",
-        "experimental": "Show features still in development.",
-        "lazyStreamClose": "Keep the mic open for 30s after a take."
-      }
     }
   },
   "footer": {
     "checkingUpdates": "Checking for updates...",
     "updateAvailableShort": "Update available",
     "upToDate": "Up to date",
+    "updateCheckingDisabled": "Synced weekly from upstream",
     "downloading": "Downloading... {{progress}}%",
     "installing": "Installing...",
     "preparing": "Preparing...",
@@ -800,15 +746,6 @@
       "dark": "Dark"
     }
   },
-  "keycap": {
-    "cmd": "Cmd",
-    "opt": "Opt",
-    "shift": "Shift",
-    "ctrl": "Ctrl",
-    "alt": "Alt",
-    "win": "Win",
-    "super": "Super"
-  },
   "overlay": {
     "transcribing": "Transcribing...",
     "processing": "Processing..."
@@ -823,54 +760,5 @@
     "learnMore": "How to fix",
     "recorderBlocked": "Can't record shortcuts right now — macOS Secure Input is blocking key events. Resolve the Secure Input warning first.",
     "dismiss": "Dismiss"
-  },
-  "shell": {
-    "appName": "Fancy Shmancy",
-    "nav": {
-      "dictation": "Dictation",
-      "dictionary": "Dictionary",
-      "models": "Models",
-      "settings": "Settings",
-      "about": "About",
-      "debug": "Debug"
-    },
-    "home": {
-      "empty": "Your transcripts will show up here.",
-      "stats_one": "{{count}} recording · {{hours}} h dictated · {{size}}",
-      "stats_other": "{{count}} recordings · {{hours}} h dictated · {{size}}"
-    },
-    "history": {
-      "search": "Search transcripts",
-      "noResults": "Nothing matches that search."
-    },
-    "dictionary": {
-      "title": "Dictionary"
-    },
-    "models": {
-      "title": "Models"
-    },
-    "about": {
-      "title": "About"
-    },
-    "debug": {
-      "title": "Debug"
-    },
-    "transcripts": {
-      "play": "Play recording",
-      "pause": "Pause",
-      "copy": "Copy text",
-      "copied": "Copied",
-      "more": "More actions",
-      "save": "Save",
-      "unsave": "Remove from saved",
-      "retranscribe": "Re-transcribe",
-      "delete": "Delete",
-      "cancelled": "Cancelled",
-      "failed": "Transcription failed",
-      "transcribing": "Transcribing…",
-      "deleteError": "Could not delete that recording.",
-      "retranscribeError": "Could not re-transcribe that recording.",
-      "playError": "Could not play that recording."
-    }
   }
 }

@@ -1,14 +1,11 @@
 import React, { useEffect, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { RotateCcw } from "lucide-react";
 import {
   getKeyName,
   formatKeyCombination,
   normalizeKey,
 } from "../../lib/utils/keyboard";
-import { KeycapPill } from "../ui/KeycapPill";
 import { ResetButton } from "../ui/ResetButton";
-import { IconAction } from "./modal/controls";
 import { SettingContainer } from "../ui/SettingContainer";
 import { useSettings } from "../../hooks/useSettings";
 import { useOsType } from "../../hooks/useOsType";
@@ -20,8 +17,6 @@ interface GlobalShortcutInputProps {
   grouped?: boolean;
   shortcutId: string;
   disabled?: boolean;
-  /** See `ShortcutInput`: `none` renders the recorder without its container. */
-  chrome?: "container" | "none";
 }
 
 export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
@@ -29,7 +24,6 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
   grouped = false,
   shortcutId,
   disabled = false,
-  chrome = "container",
 }) => {
   const { t } = useTranslation();
   const { getSetting, updateBinding, resetBinding, isUpdating, isLoading } =
@@ -40,7 +34,7 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
     null,
   );
   const [originalBinding, setOriginalBinding] = useState<string>("");
-  const shortcutRefs = useRef<Map<string, HTMLElement | null>>(new Map());
+  const shortcutRefs = useRef<Map<string, HTMLDivElement | null>>(new Map());
   const osType = useOsType();
 
   const bindings = getSetting("bindings") || {};
@@ -210,75 +204,9 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
   };
 
   // Store references to shortcut elements
-  const setShortcutRef = (id: string, ref: HTMLElement | null) => {
+  const setShortcutRef = (id: string, ref: HTMLDivElement | null) => {
     shortcutRefs.current.set(id, ref);
   };
-
-  // The settings modal supplies the title and the value line itself, so the
-  // recorder renders as the row's control: the configured combination as an
-  // orange keycap that starts recording, and a reset back to the default.
-  if (chrome === "none") {
-    const rowBinding = bindings[shortcutId];
-    if (isLoading || !rowBinding) {
-      return (
-        <span
-          style={{
-            fontFamily: "var(--fs-font-sans)",
-            fontSize: "var(--fs-text-body)",
-            color: "var(--fs-ink-muted)",
-          }}
-        >
-          {t(
-            isLoading
-              ? "settings.general.shortcut.loading"
-              : "settings.general.shortcut.none",
-          )}
-        </span>
-      );
-    }
-
-    const recording = editingShortcutId === shortcutId;
-    return (
-      <div className="flex items-center gap-[4px]">
-        <button
-          type="button"
-          ref={(ref) => setShortcutRef(shortcutId, ref)}
-          disabled={disabled}
-          onClick={() => startRecording(shortcutId)}
-          aria-label={t("settings.general.shortcut.title")}
-          className="flex cursor-pointer items-center disabled:cursor-not-allowed disabled:opacity-50"
-          style={{ height: "var(--fs-control-h)", paddingInline: "4px" }}
-        >
-          {recording ? (
-            <span
-              className="inline-flex items-center whitespace-nowrap"
-              style={{
-                height: "24px",
-                paddingInline: "8px",
-                borderRadius: "var(--fs-radius-item)",
-                background: "var(--fs-quiet)",
-                fontFamily: "var(--fs-font-sans)",
-                fontSize: "var(--fs-text-body)",
-                fontWeight: 600,
-                color: "var(--fs-ink)",
-              }}
-            >
-              {formatCurrentKeys()}
-            </span>
-          ) : (
-            <KeycapPill shortcut={rowBinding.current_binding} size="sm" />
-          )}
-        </button>
-        <IconAction
-          onClick={() => void resetBinding(shortcutId)}
-          label={t("settings.modal.shortcuts.reset")}
-          disabled={disabled || isUpdating(`binding_${shortcutId}`)}
-        >
-          <RotateCcw size={14} aria-hidden />
-        </IconAction>
-      </div>
-    );
-  }
 
   // If still loading, show loading state
   if (isLoading) {
@@ -351,7 +279,7 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
         {editingShortcutId === shortcutId ? (
           <div
             ref={(ref) => setShortcutRef(shortcutId, ref)}
-            className="px-2 py-1 text-sm font-semibold border border-logo-primary bg-[var(--fs-quiet)] rounded-md"
+            className="px-2 py-1 text-sm font-semibold border border-logo-primary bg-logo-primary/30 rounded-md"
           >
             {formatCurrentKeys()}
           </div>

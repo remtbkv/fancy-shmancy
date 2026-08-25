@@ -58,9 +58,7 @@ const selectStyles: StylesConfig<SelectOption, false> = {
     backgroundColor: state.isFocused ? focusBackground : baseBackground,
     fontSize: "0.875rem",
     color: "var(--color-text)",
-    // Colours only, at MOTION.md's enter time — `all` would animate layout.
-    transition:
-      "background-color 80ms ease-out, border-color 80ms ease-out, box-shadow 80ms ease-out",
+    transition: "all 150ms ease",
     ":hover": {
       borderColor: "var(--color-logo-primary)",
       backgroundColor: hoverBackground,
