@@ -157,10 +157,13 @@ pub enum ModelUnloadTimeout {
     Never,
     Immediately,
     Min2,
-    #[default]
     Min5,
     Min10,
     Min15,
+    // An hour: a model reload costs seconds of silence at the very moment
+    // someone wants to talk, and idle weights cost only memory the OS can
+    // reclaim. Five minutes made every gap between dictations a reload.
+    #[default]
     Hour1,
     Hours4,
     Sec15, // Debug mode only
@@ -632,6 +635,10 @@ fn default_typed_out_apps() -> Vec<String> {
         "net.kovidgoyal.kitty",
         "com.github.wez.wezterm",
         "org.alacritty",
+        "dev.warp.Warp-Preview",
+        "co.zeit.hyper",
+        "org.tabby",
+        "com.raphaelamorim.rio",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -642,12 +649,15 @@ fn default_translate_to_english() -> bool {
     false
 }
 
+// A dictation shortcut that only works after you remember to launch the app is
+// not a dictation shortcut. It starts with the machine, and out of the way —
+// the tray icon is how you reach it.
 fn default_start_hidden() -> bool {
-    false
+    true
 }
 
 fn default_autostart_enabled() -> bool {
-    false
+    true
 }
 
 // The updater endpoint in tauri.conf.json is UPSTREAM Handy's release feed —
