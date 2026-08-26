@@ -47,11 +47,31 @@ enum Player {
 }
 
 impl Player {
+    /// A player's audio does not always come out of the process named after it:
+    /// Spotify hands playback to `com.spotify.client.helper` at least some of
+    /// the time, and a helper answers the same media key its parent does. So a
+    /// bundle id that is a known player's id, or a child of it, is that player.
+    /// `com.google.Chrome.helper` still matches nothing, which is the point —
+    /// the parent is unknown, so the child stays unknown too.
     fn from_bundle_id(bundle_id: &str) -> Option<Self> {
-        match bundle_id {
-            "com.spotify.client" => Some(Self::Spotify),
-            "com.apple.Music" | "com.apple.iTunes" => Some(Self::Music),
-            _ => None,
+        [Self::Spotify, Self::Music].into_iter().find(|player| {
+            let known = [player.bundle_id()]
+                .into_iter()
+                .chain(player.legacy_bundle_ids().iter().copied());
+            known.into_iter().any(|id| {
+                bundle_id == id
+                    || bundle_id
+                        .strip_prefix(id)
+                        .is_some_and(|rest| rest.starts_with('.'))
+            })
+        })
+    }
+
+    /// Ids the same player has shipped under.
+    fn legacy_bundle_ids(self) -> &'static [&'static str] {
+        match self {
+            Self::Spotify => &[],
+            Self::Music => &["com.apple.iTunes"],
         }
     }
 
@@ -502,6 +522,29 @@ mod tests {
         let processes = vec![
             process(11, "com.google.Chrome.helper", true),
             process(12, "com.apple.QuickTimePlayerX", true),
+        ];
+        assert!(players_making_noise(&processes, 99).is_empty());
+    }
+
+    /// Spotify moves playback into a helper process mid-session — observed on
+    /// 2026-08-25, where the music paused at 21:36 and then stopped pausing at
+    /// 21:41 with nothing changed but the bundle id emitting the audio.
+    #[test]
+    fn a_players_helper_process_is_still_that_player() {
+        let processes = vec![process(21, "com.spotify.client.helper", true)];
+        assert_eq!(players_making_noise(&processes, 99), vec![Player::Spotify]);
+
+        let renderers = vec![process(22, "com.apple.Music.helper.renderer", true)];
+        assert_eq!(players_making_noise(&renderers, 99), vec![Player::Music]);
+    }
+
+    /// The prefix must be a whole id, not a string prefix: a different app whose
+    /// name merely begins the same way is not the player.
+    #[test]
+    fn a_lookalike_bundle_id_is_not_the_player() {
+        let processes = vec![
+            process(31, "com.spotify.clientele", true),
+            process(32, "com.apple.MusicMagpie", true),
         ];
         assert!(players_making_noise(&processes, 99).is_empty());
     }
