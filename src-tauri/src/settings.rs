@@ -603,8 +603,11 @@ fn default_editing_cancel_keys() -> Vec<String> {
 /// Long enough to cover the gap between the modifier and the Delete in a
 /// deliberate Option+Delete, short enough that the overlay still feels
 /// immediate when the hold really is a dictation.
+// The window the overlay and the start chime are held back while a held
+// shortcut could still turn out to be Option+Delete. 200ms is where the bar
+// stops feeling late without letting a mistaken hold flash on screen.
 fn default_editing_cancel_grace_ms() -> u64 {
-    250
+    200
 }
 
 // Two minutes: long enough to cover a paste that went to the wrong window and
