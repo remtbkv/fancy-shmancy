@@ -1727,6 +1727,28 @@ impl TranscriptionManager {
                                     t.timings.encode_ms,
                                     t.timings.decode_ms
                                 );
+                                // How sure the model was, token by token. A
+                                // transcript invented from a short clip should
+                                // look different here from one that was heard,
+                                // and that difference is the only thing that
+                                // could ever justify refusing to paste it.
+                                // NaN means this family reports no confidence.
+                                let confident: Vec<f32> =
+                                    t.tokens.iter().map(|tok| tok.p).filter(|p| !p.is_nan()).collect();
+                                if confident.is_empty() {
+                                    debug!("Token confidence: not reported by this model");
+                                } else {
+                                    let mean =
+                                        confident.iter().sum::<f32>() / confident.len() as f32;
+                                    let worst =
+                                        confident.iter().fold(f32::INFINITY, |m, p| m.min(*p));
+                                    debug!(
+                                        "Token confidence over {} tokens: mean={:.3} min={:.3}",
+                                        confident.len(),
+                                        mean,
+                                        worst
+                                    );
+                                }
                                 // Whisper's audio-based LID (auto mode only;
                                 // `None` when a language hint was passed).
                                 model_detected_language = t.language;
