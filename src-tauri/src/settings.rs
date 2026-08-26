@@ -229,11 +229,12 @@ impl Default for KeyboardImplementation {
 
 impl Default for PasteMethod {
     fn default() -> Self {
-        // Default to CtrlV for macOS and Windows, Direct for Linux
-        #[cfg(target_os = "linux")]
-        return PasteMethod::Direct;
-        #[cfg(not(target_os = "linux"))]
-        return PasteMethod::CtrlV;
+        // Direct everywhere. Synthesising Cmd+V asks the focused app to run its
+        // own paste command, which depends on that app having a normal edit
+        // menu and on the clipboard surviving the round trip; typing the text
+        // in works the same way in every window, and the clipboard-length
+        // fallback already covers the one case where typing is too slow.
+        PasteMethod::Direct
     }
 }
 
@@ -606,8 +607,10 @@ fn default_editing_cancel_grace_ms() -> u64 {
     250
 }
 
+// Two minutes: long enough to cover a paste that went to the wrong window and
+// a retry, short enough that it never resurrects something from another task.
 fn default_paste_last_transcript_window_secs() -> u64 {
-    300
+    120
 }
 
 /// Empty by default: an app only needs typing when its input turns a big paste
@@ -667,8 +670,10 @@ fn default_update_checks_enabled() -> bool {
     false
 }
 
+// An update you did not ask for and cannot refuse does not need a changelog
+// dialog: whatever changed, the new build is the one you are running.
 fn default_show_whats_new_on_update() -> bool {
-    true
+    false
 }
 
 fn default_whats_new_last_seen_version() -> String {
@@ -1165,7 +1170,7 @@ pub fn get_default_settings() -> AppSettings {
         post_process_selected_prompt_id: None,
         mute_while_recording: false,
         pause_playback_while_recording: default_pause_playback_while_recording(),
-        append_trailing_space: false,
+        append_trailing_space: true,
         app_language: default_app_language(),
         theme: default_theme(),
         experimental_enabled: false,
@@ -1411,6 +1416,12 @@ fn apply_settings_migrations(
     }
     if !settings.filler_word_removal_enabled {
         settings.filler_word_removal_enabled = true;
+        updated = true;
+    }
+
+    // Nobody wants a changelog popup on launch.
+    if settings.show_whats_new_on_update {
+        settings.show_whats_new_on_update = false;
         updated = true;
     }
 
