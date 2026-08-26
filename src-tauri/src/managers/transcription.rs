@@ -1554,6 +1554,21 @@ impl TranscriptionManager {
             return Ok(String::new());
         }
 
+        // What the clip sounded like, recorded next to what came out of it.
+        // A transcript that reads as nonsense is usually a short quiet clip,
+        // and without these numbers in the log that stays a guess.
+        {
+            let peak = audio.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+            let rms = (audio.iter().map(|s| s * s).sum::<f32>() / audio_len as f32).sqrt();
+            let db = |v: f32| 20.0 * (v.max(1e-6)).log10();
+            debug!(
+                "Clip: {:.2}s peak={:.1} dBFS rms={:.1} dBFS",
+                audio_len as f32 / Self::SAMPLE_RATE as f32,
+                db(peak),
+                db(rms)
+            );
+        }
+
         // Check if model is loaded, if not try to load it
         {
             // If the model is loading, wait for it to complete.

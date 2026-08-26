@@ -250,13 +250,23 @@ impl TranscriptionCoordinator {
                                 pending_tap,
                             ) {
                                 LockAction::Engage => {
+                                    let tap_gap_ms =
+                                        pending_tap.map(|(_, gap)| gap.as_millis()).unwrap_or(0);
                                     pending_release = None;
                                     locked = true;
                                     // Hands-free from here: nothing is being
                                     // held, so nothing can turn out to have
                                     // been an editing chord.
                                     crate::shortcut::editing_guard::disarm();
-                                    debug!("Double tap latched recording for '{binding_id}'");
+                                    // The gap is logged because a latch nobody
+                                    // meant to ask for looks exactly like a
+                                    // recording that ended too early, and only
+                                    // the gap tells the two apart afterwards.
+                                    debug!(
+                                        "Double tap latched recording for '{binding_id}' (gap {} ms of {} ms window)",
+                                        tap_gap_ms,
+                                        DOUBLE_TAP_WINDOW.as_millis()
+                                    );
                                     // The cancel key stays registered here. It is
                                     // held for the whole latched session, which
                                     // does mean Escape is blocked from other apps
