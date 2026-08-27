@@ -50,3 +50,6 @@ __pycache__/
 # own settings and history (scripts/ui-shots/make-fixtures.py) — machine-local
 # data, not something to commit.
 scripts/ui-shots/fixtures.json
+
+# Toolchain installed by scripts/build-macos.sh --local
+.toolchain

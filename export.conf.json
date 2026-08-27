@@ -1,3 +1,6 @@
 {
-  "identifier": "com.remtbkv.fancyshmancy"
+  "identifier": "com.remtbkv.fancyshmancy",
+  "bundle": {
+    "createUpdaterArtifacts": false
+  }
 }

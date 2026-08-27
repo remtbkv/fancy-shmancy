@@ -18,14 +18,19 @@ Windows and Linux builds inherit upstream's support but this fork is only exerci
 
 ## Install
 
-There are no signed releases yet, so it's a build from source:
+Download the `.dmg` from [Releases](https://github.com/remtbkv/fancy-shmancy/releases), open it, and drag the app to Applications.
 
-1. Install [Rust](https://rustup.rs/) and [Bun](https://bun.sh/).
-2. `bun install`
-3. `bun run tauri build --bundles app`
-4. The app lands in `src-tauri/target/release/bundle/macos/`. Drag it to Applications.
+It isn't notarized by Apple, so macOS refuses to launch it the first time. Clear the flag macOS puts on downloaded files:
 
-The first launch downloads a transcription model (the app has its own downloader — nothing else to install) and asks for microphone and accessibility permissions. If you received a pre-built copy instead, macOS will block the unsigned app the first time: right-click it, choose Open, and confirm. Every launch after that is normal.
+```bash
+xattr -dr com.apple.quarantine "/Applications/Fancy Shmancy.app"
+```
+
+Or, without a terminal: open it, let the refusal appear, then go to System Settings → Privacy & Security, scroll to the bottom, and click Open Anyway. Every launch after that is normal.
+
+To build it yourself instead, run `scripts/build-macos.sh`. It looks for Rust and Bun and, if they're missing, installs them inside the checkout rather than your home directory — `rm -rf .toolchain` when you're done and the machine is as it was. Pass `--local` to ignore a system toolchain you'd rather leave alone.
+
+The first launch downloads a transcription model (the app has its own downloader — nothing else to install) and asks for microphone and accessibility permissions.
 
 Platform-specific build details are in [BUILD.md](BUILD.md); for Linux quirks and troubleshooting, upstream's [README](https://github.com/cjpais/Handy#readme) applies.
 
