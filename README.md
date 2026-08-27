@@ -1,4 +1,5 @@
 # Fancy Shmancy
+(claude slop + some of my interjections)
 
 Hold a key, talk, and the words land wherever your cursor is. Everything runs on your own machine — audio never leaves it.
 
@@ -6,13 +7,12 @@ This is a fork of [Handy](https://github.com/cjpais/Handy) by CJ Pais, an open-s
 
 ## What's different from Handy
 
-- **Push-to-talk first.** Hold Right Option to record, release to paste. Double-tap locks the mic on until you tap again.
-- **A recording bar that answers speech, not the room.** The level meter rides a learned noise floor and a dynamic range derived from your own recording history, so it moves when you speak — quietly or in a loud café — and stays flat when you don't. It re-tunes itself as your history grows.
-- **No lost takes.** Audio is spooled to disk while you talk. A crash, force-quit, or update mid-sentence leaves a playable recording that shows up in History on the next launch, and Escape cancels the paste but keeps the audio.
-- **Terminals get typed into, not pasted.** A configurable per-app list (terminals and Claude by default) receives keystrokes instead of a paste, and very long pastes route through the clipboard so the target app doesn't choke.
+- **Push-to-talk first.** Hold Right Option to record (this is my default but use anything, I just can't use the left Fn button), release to paste. Double-tap locks the mic on until you tap again.
+- **Better? recording bar.** The level meter rides a learned noise floor and a dynamic range derived from your own recording history, so it moves when you speak — quietly or in a loud café — and stays flat when you don't. It re-tunes itself as your history grows. Although I don't think it really changed much however claude might as well do this if it's "better".
+- **No lost recordings.** Audio is spooled to disk while you talk. A crash, force-quit, or update mid-sentence leaves a playable recording that shows up in History on the next launch, and Escape cancels the paste but keeps the audio (for those accidents).
+- **Terminals get typed into, not pasted.** A configurable per-app list (terminals and Claude by default) pastes incrementally so you don't get a [Pasted text #1 +144 lines] block, rather seeing the full text.
 - **Music pauses only when the mic would hear it.** Playing through speakers pauses for the recording; headphones keep playing.
-- **Recordings are capped by size, not age.** One number in gigabytes (default 5 GB, roughly 43 hours of audio), oldest dropped first, with the current usage shown next to it. The recordings folder is yours to choose.
-- **A short model list up front.** Onboarding offers a few strong English models instead of the full zoo; the complete catalog is still in Settings.
+- **Recordings capped by size.** One number in gigabytes (default 5 GB, roughly 43 hours of audio), oldest dropped first, with the current usage shown next to it. The recordings folder is yours to choose.
 
 Windows and Linux builds inherit upstream's support but this fork is only exercised on macOS.
 
