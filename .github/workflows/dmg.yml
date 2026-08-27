@@ -1,0 +1,54 @@
+# The download on the release page has to follow main without anyone compiling
+# on a laptop for twenty minutes. Docs-only pushes do not change the app, so
+# they do not spend a runner.
+#
+# Upstream's own workflows are inherited by this fork and cannot pass here --
+# their release build signs Windows binaries with Azure credentials this
+# repository does not have. They are disabled through the API rather than
+# deleted, so upstream's files stay untouched and syncs do not conflict.
+name: DMG
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+  workflow_dispatch:
+
+concurrency:
+  group: dmg
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: bun install --frozen-lockfile
+
+      # ci.conf.json signs ad-hoc. A runner has no keychain, so the certificate
+      # the desktop build uses is not available -- and a certificate only this
+      # fork's author holds means nothing on a stranger's Mac anyway. Either
+      # way the app is not notarized and Gatekeeper asks before the first
+      # launch; the release notes say what to do about it.
+      - name: Build
+        run: bun run tauri build --config ci.conf.json --bundles app,dmg
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/publish-dmg.sh

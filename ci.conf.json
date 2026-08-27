@@ -1,0 +1,9 @@
+{
+  "identifier": "com.remtbkv.fancyshmancy",
+  "bundle": {
+    "createUpdaterArtifacts": false,
+    "macOS": {
+      "signingIdentity": "-"
+    }
+  }
+}
