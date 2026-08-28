@@ -5,6 +5,15 @@ pub const VAD_OFFLINE_HANGOVER_FRAMES: usize = 15;
 pub const VAD_STREAMING_HANGOVER_FRAMES: usize = 55;
 pub const VAD_ONSET_FRAMES: usize = 2;
 
+/// How far above the room floor a frame has to sit to be admitted as speech
+/// even when Silero says otherwise, and how much history the floor is measured
+/// over. Silero reports an absolute probability, so as the room gets louder its
+/// confidence in a fixed voice falls and the gate starts deleting words. Level
+/// relative to the current floor keeps working when the floor moves.
+pub const VAD_RESCUE_MARGIN_DB: f32 = 5.0;
+pub const VAD_FLOOR_WINDOW_FRAMES: usize = 100; // ~3 s at 30 ms/frame
+pub const VAD_FLOOR_MIN_FRAMES: usize = 20;
+
 pub enum VadFrame<'a> {
     /// Speech – may aggregate several frames (prefill + current + hangover)
     Speech(&'a [f32]),

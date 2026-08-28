@@ -19,7 +19,13 @@ use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 
 const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
-const VAD_THRESHOLD: f32 = 0.3;
+// Measured against a 26 s dictation mixed with this machine's own room tone:
+// at 0.3 the gate kept 99% of the speech in a quiet room but only 58% once the
+// speech-to-floor margin fell to ~7 dB, and the frames it drops are discarded
+// before the buffer, so the words are gone. 0.2 plus the level rescue in
+// SmoothedVad holds 93% at that margin and still admits none of a 20 s
+// room-tone-only probe, which is the case the gate exists to prevent.
+const VAD_THRESHOLD: f32 = 0.2;
 
 fn set_mute(mute: bool) {
     // Expected behavior:
