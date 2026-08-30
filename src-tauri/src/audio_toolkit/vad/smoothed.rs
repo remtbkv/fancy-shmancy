@@ -1,6 +1,6 @@
 use super::{
     VadFrame, VoiceActivityDetector, VAD_FLOOR_MIN_FRAMES, VAD_FLOOR_WINDOW_FRAMES,
-    VAD_RESCUE_MARGIN_DB,
+    VAD_RESCUE_MARGIN_DB, VAD_RESCUE_MIN_PROB,
 };
 use anyhow::Result;
 use std::collections::VecDeque;
@@ -82,7 +82,10 @@ impl VoiceActivityDetector for SmoothedVad {
         }
 
         let mut is_voice = self.inner_vad.is_voice(frame)?;
-        if !is_voice && self.floor_history.len() >= VAD_FLOOR_MIN_FRAMES {
+        if !is_voice
+            && self.floor_history.len() >= VAD_FLOOR_MIN_FRAMES
+            && self.inner_vad.last_prob() > VAD_RESCUE_MIN_PROB
+        {
             let level = *self.floor_history.back().unwrap();
             is_voice = level > floor_estimate(&self.floor_history) + VAD_RESCUE_MARGIN_DB;
         }
@@ -156,9 +159,28 @@ mod tests {
 
     /// Stands in for Silero having lost confidence in a noisy room: it never
     /// reports voice, so anything that gets through came from the level rescue.
+    /// Its score stays in the band the rescue is meant to serve.
     struct NeverVoice;
 
     impl VoiceActivityDetector for NeverVoice {
+        fn last_prob(&self) -> f32 {
+            0.15
+        }
+
+        fn push_frame<'a>(&'a mut self, _frame: &'a [f32]) -> Result<VadFrame<'a>> {
+            Ok(VadFrame::Noise)
+        }
+    }
+
+    /// A frame the detector is certain holds no voice at all — a keypress, a
+    /// chair creak. Loud relative to the room, and still not speech.
+    struct CertainlyNotVoice;
+
+    impl VoiceActivityDetector for CertainlyNotVoice {
+        fn last_prob(&self) -> f32 {
+            0.001
+        }
+
         fn push_frame<'a>(&'a mut self, _frame: &'a [f32]) -> Result<VadFrame<'a>> {
             Ok(VadFrame::Noise)
         }
@@ -189,6 +211,16 @@ mod tests {
         assert_eq!(feed(&mut vad, &tone(0.01), 60), 0);
         // +20 dB over that floor is not room tone, whatever Silero thinks.
         assert!(feed(&mut vad, &tone(0.1), 10) > 0);
+    }
+
+    #[test]
+    fn a_loud_transient_the_detector_rejects_outright_is_not_rescued() {
+        let mut vad = SmoothedVad::new(Box::new(CertainlyNotVoice), 15, 15, 2);
+        assert_eq!(feed(&mut vad, &tone(0.01), 60), 0);
+        // Same +20 dB burst the marginal detector gets rescued on. Level alone
+        // must not open the gate, or a minute of typing becomes a paragraph of
+        // invented text.
+        assert_eq!(feed(&mut vad, &tone(0.1), 10), 0);
     }
 
     #[test]

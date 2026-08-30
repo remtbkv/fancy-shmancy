@@ -13,6 +13,7 @@ const SILERO_FRAME_SAMPLES: usize =
 pub struct SileroVad {
     engine: Vad,
     threshold: f32,
+    last_prob: f32,
 }
 
 impl SileroVad {
@@ -25,11 +26,16 @@ impl SileroVad {
             engine: Vad::new(&model_path, constants::WHISPER_SAMPLE_RATE as usize)
                 .map_err(|e| anyhow::anyhow!("Failed to create VAD: {e}"))?,
             threshold,
+            last_prob: 0.0,
         })
     }
 }
 
 impl VoiceActivityDetector for SileroVad {
+    fn last_prob(&self) -> f32 {
+        self.last_prob
+    }
+
     fn push_frame<'a>(&'a mut self, frame: &'a [f32]) -> Result<VadFrame<'a>> {
         if frame.len() != SILERO_FRAME_SAMPLES {
             anyhow::bail!(
@@ -43,6 +49,8 @@ impl VoiceActivityDetector for SileroVad {
             .compute(frame)
             .map_err(|e| anyhow::anyhow!("Silero VAD error: {e}"))?;
 
+        self.last_prob = result.prob;
+
         if result.prob > self.threshold {
             Ok(VadFrame::Speech(frame))
         } else {
@@ -51,6 +59,7 @@ impl VoiceActivityDetector for SileroVad {
     }
 
     fn reset(&mut self) {
+        self.last_prob = 0.0;
         // Clear the Silero LSTM hidden/cell state so a new session doesn't
         // inherit recurrent context from the previous recording.
         self.engine.reset();

@@ -14,6 +14,15 @@ pub const VAD_RESCUE_MARGIN_DB: f32 = 5.0;
 pub const VAD_FLOOR_WINDOW_FRAMES: usize = 100; // ~3 s at 30 ms/frame
 pub const VAD_FLOOR_MIN_FRAMES: usize = 20;
 
+/// Floor on the detector's own score before the level rescue may fire. Level
+/// alone cannot tell a quiet word from a keyboard press, and a rescued frame
+/// drags in the prefill and hangover around it — about a second of room tone
+/// the model will happily invent a sentence over. Requiring the detector to
+/// have at least a faint opinion keeps the rescue on marginal speech, where
+/// Silero scores in the low tenths, and off transients, where it scores in the
+/// thousandths.
+pub const VAD_RESCUE_MIN_PROB: f32 = 0.05;
+
 pub enum VadFrame<'a> {
     /// Speech – may aggregate several frames (prefill + current + hangover)
     Speech(&'a [f32]),
@@ -35,6 +44,13 @@ pub trait VoiceActivityDetector: Send + Sync {
     /// waveform, which has to settle when the speaking does.
     fn last_raw_voice(&self) -> bool {
         true
+    }
+
+    /// The detector's raw score for the frame it last saw. Detectors that have
+    /// no notion of a score report 1.0, which leaves callers that gate on it
+    /// behaving as they did before.
+    fn last_prob(&self) -> f32 {
+        1.0
     }
 
     /// Primary streaming API: feed one 30-ms frame, get keep/drop decision.
