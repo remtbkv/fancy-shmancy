@@ -62,6 +62,12 @@ enum Command {
         is_pressed: bool,
         push_to_talk: bool,
         double_tap_lock: bool,
+        /// When the key event arrived, not when this thread got to it. A cold
+        /// start blocks the loop for the length of a mic open, and the release
+        /// and second press of a double tap queue up behind it; measured on
+        /// arrival they are still a tap and a gap, measured on processing they
+        /// land in the same instant and read as key repeat.
+        at: Instant,
     },
     Cancel {
         recording_was_active: bool,
@@ -209,6 +215,7 @@ impl TranscriptionCoordinator {
                             is_pressed,
                             push_to_talk,
                             double_tap_lock,
+                            at,
                         } => {
                             // The shortcut is up: an arrow key from here on is
                             // navigation, not a sign this hold was really an
@@ -232,12 +239,15 @@ impl TranscriptionCoordinator {
                                     .as_ref()
                                     .is_none_or(|pending| pending.binding_id != binding_id)
                             {
-                                press_started = Some((binding_id.clone(), Instant::now()));
+                                press_started = Some((binding_id.clone(), at));
                             }
 
                             let pending_tap = pending_release.as_ref().and_then(|pending| {
                                 pending.tap_candidate.then(|| {
-                                    (pending.binding_id.as_str(), pending.released_at.elapsed())
+                                    (
+                                        pending.binding_id.as_str(),
+                                        at.saturating_duration_since(pending.released_at),
+                                    )
                                 })
                             });
 
@@ -323,8 +333,11 @@ impl TranscriptionCoordinator {
                                         && press_started
                                             .as_ref()
                                             .filter(|(id, _)| id == &binding_id)
-                                            .is_some_and(|(_, at)| at.elapsed() < TAP_MAX_HOLD);
-                                    let released_at = Instant::now();
+                                            .is_some_and(|(_, pressed_at)| {
+                                                at.saturating_duration_since(*pressed_at)
+                                                    < TAP_MAX_HOLD
+                                            });
+                                    let released_at = at;
                                     let grace = if tap_candidate {
                                         DOUBLE_TAP_WINDOW
                                     } else {
@@ -345,12 +358,13 @@ impl TranscriptionCoordinator {
                             // Debounce rapid-fire press events (key repeat / double-tap).
                             // Push-to-talk releases may be deferred above to absorb X11 auto-repeat.
                             if is_pressed {
-                                let now = Instant::now();
-                                if last_press.is_some_and(|t| now.duration_since(t) < DEBOUNCE) {
+                                if last_press
+                                    .is_some_and(|t| at.saturating_duration_since(t) < DEBOUNCE)
+                                {
                                     debug!("Debounced press for '{binding_id}'");
                                     continue;
                                 }
-                                last_press = Some(now);
+                                last_press = Some(at);
                             }
 
                             if push_to_talk {
@@ -454,6 +468,7 @@ impl TranscriptionCoordinator {
                 is_pressed,
                 push_to_talk,
                 double_tap_lock,
+                at: Instant::now(),
             })
             .is_err()
         {
@@ -876,6 +891,12 @@ mod tests {
         Release,
         /// Advance the clock, firing a deferred release if its deadline passes.
         Wait(u64),
+        /// A key event that arrived `ago` ms before the loop got to it — the
+        /// loop was busy (a cold mic open, a model load) and the event queued.
+        Late {
+            pressed: bool,
+            ago: u64,
+        },
     }
 
     struct LockSim {
@@ -926,6 +947,13 @@ mod tests {
         }
 
         fn input(&mut self, is_pressed: bool) {
+            self.input_at(is_pressed, self.clock);
+        }
+
+        /// `at` is the event's arrival time; `self.clock` is when the loop
+        /// processes it. Every timing decision reads `at`, as the coordinator
+        /// does.
+        fn input_at(&mut self, is_pressed: bool, at: u64) {
             let recording = if self.stage == SimStage::Recording {
                 Some(BINDING)
             } else {
@@ -933,11 +961,16 @@ mod tests {
             };
 
             if is_pressed && self.pending.is_none() {
-                self.press_started = Some(self.clock);
+                self.press_started = Some(at);
             }
 
             let pending_tap = self.pending.and_then(|(tap_candidate, released_at, _)| {
-                tap_candidate.then(|| (BINDING, Duration::from_millis(self.clock - released_at)))
+                tap_candidate.then(|| {
+                    (
+                        BINDING,
+                        Duration::from_millis(at.saturating_sub(released_at)),
+                    )
+                })
             });
 
             match classify_lock_event(
@@ -977,15 +1010,15 @@ mod tests {
                 }
                 PttAction::DeferRelease => {
                     let tap_candidate = self.lock_enabled
-                        && self
-                            .press_started
-                            .is_some_and(|at| self.clock - at < ms(TAP_MAX_HOLD));
+                        && self.press_started.is_some_and(|pressed_at| {
+                            at.saturating_sub(pressed_at) < ms(TAP_MAX_HOLD)
+                        });
                     let grace = if tap_candidate {
                         ms(DOUBLE_TAP_WINDOW)
                     } else {
                         ms(RELEASE_GRACE)
                     };
-                    self.pending = Some((tap_candidate, self.clock, self.clock + grace));
+                    self.pending = Some((tap_candidate, at, at + grace));
                     return;
                 }
                 PttAction::Passthrough => {}
@@ -994,11 +1027,11 @@ mod tests {
             if is_pressed {
                 if self
                     .last_press
-                    .is_some_and(|t| self.clock - t < ms(DEBOUNCE))
+                    .is_some_and(|t| at.saturating_sub(t) < ms(DEBOUNCE))
                 {
                     return;
                 }
-                self.last_press = Some(self.clock);
+                self.last_press = Some(at);
             }
 
             if is_pressed && self.stage == SimStage::Idle {
@@ -1016,9 +1049,41 @@ mod tests {
                     LEv::Press => self.input(true),
                     LEv::Release => self.input(false),
                     LEv::Wait(duration) => self.wait(*duration),
+                    LEv::Late { pressed, ago } => {
+                        self.input_at(*pressed, self.clock.saturating_sub(*ago))
+                    }
                 }
             }
         }
+    }
+
+    /// The first double tap after the model was unloaded: the press opens the
+    /// microphone cold and the loop is busy for ~170 ms, so the release and
+    /// the second press queue up and get processed back to back. Timed on
+    /// arrival they are a 60 ms tap and a 70 ms gap — a double tap — and the
+    /// recording latches instead of being written off as key repeat and
+    /// stopping after the window with nothing recorded.
+    #[test]
+    fn a_double_tap_queued_behind_a_cold_start_still_latches() {
+        let mut sim = LockSim::new(true);
+        sim.run(&[LEv::Press]);
+        // Press processed at 0; the loop stalls 170 ms inside start().
+        sim.clock += 170;
+        sim.run(&[
+            LEv::Late {
+                pressed: false,
+                ago: 110,
+            }, // released at 60
+            LEv::Late {
+                pressed: true,
+                ago: 40,
+            }, // pressed again at 130
+            LEv::Release,
+            LEv::Wait(1_000),
+        ]);
+        assert!(sim.locked, "the queued second tap must latch");
+        assert_eq!(sim.stage, SimStage::Recording);
+        assert_eq!((sim.starts, sim.stops), (1, 0));
     }
 
     /// Tap, tap, let go: recording stays on with no key held and no second
