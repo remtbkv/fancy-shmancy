@@ -408,7 +408,59 @@ pub fn paste_text_at_once(enigo: &mut Enigo, text: &str) -> Result<(), String> {
 /// Pastes text directly using the enigo text method.
 /// This tries to use system input methods if possible, otherwise simulates keystrokes one by one.
 pub fn paste_text_direct(enigo: &mut Enigo, text: &str) -> Result<(), String> {
+    let mut previous_was_text = false;
+    for step in typing_steps(text) {
+        match step {
+            TypingStep::Text(piece) => {
+                if previous_was_text {
+                    std::thread::sleep(CHUNK_PAUSE);
+                }
+                enigo
+                    .text(&piece)
+                    .map_err(|e| format!("Failed to send text directly: {}", e))?;
+                previous_was_text = true;
+            }
+            TypingStep::CursorNoop => {
+                send_cursor_noop(enigo)?;
+                previous_was_text = false;
+            }
+            TypingStep::SoftNewline => {
+                send_soft_newline(enigo)?;
+                previous_was_text = false;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, PartialEq)]
+enum TypingStep {
+    /// One chunk of the transcript, sent as a single text event.
+    Text(String),
+    /// Left arrow then Right arrow: lands the cursor where it already was,
+    /// and puts an escape sequence into the input stream between text runs.
+    CursorNoop,
+    /// Shift+Return for a newline the transcript contains.
+    SoftNewline,
+}
+
+/// Claude Code turns any single input event longer than this into a
+/// "[Pasted text #N]" attachment (its `key.length > 800` rule, checked per
+/// keystroke event, not per paste). A terminal app reads whatever bytes piled
+/// up while it was busy as ONE event, so on a loaded machine a run of small
+/// chunks comes back as a single 800+ character key and the transcript
+/// collapses. Keeping each text run short does nothing about that on its own;
+/// the cursor no-op between runs does, because the input parser splits text
+/// at every escape sequence and hands each piece over as its own event.
+const CLAUDE_CODE_PASTE_LIMIT_CHARS: usize = 800;
+/// Half the limit, so even two runs read back together stay under it.
+const MAX_RUN_CHARS: usize = CLAUDE_CODE_PASTE_LIMIT_CHARS / 2 - 16;
+
+/// The keystroke events a typed-out transcript becomes, in order.
+fn typing_steps(text: &str) -> Vec<TypingStep> {
     let chunk_chars = typing_chunk_size(text);
+    let mut steps = Vec::new();
 
     for (index, line) in text
         .replace("\r\n", "\n")
@@ -417,22 +469,31 @@ pub fn paste_text_direct(enigo: &mut Enigo, text: &str) -> Result<(), String> {
         .enumerate()
     {
         if index > 0 {
-            send_soft_newline(enigo)?;
+            steps.push(TypingStep::SoftNewline);
         }
 
         let chars: Vec<char> = line.chars().collect();
-        for (position, chunk) in chars.chunks(chunk_chars).enumerate() {
-            if position > 0 {
-                std::thread::sleep(CHUNK_PAUSE);
+        let mut run_chars = 0;
+        for chunk in chars.chunks(chunk_chars) {
+            if run_chars + chunk.len() > MAX_RUN_CHARS {
+                steps.push(TypingStep::CursorNoop);
+                run_chars = 0;
             }
-            let piece: String = chunk.iter().collect();
-            enigo
-                .text(&piece)
-                .map_err(|e| format!("Failed to send text directly: {}", e))?;
+            steps.push(TypingStep::Text(chunk.iter().collect()));
+            run_chars += chunk.len();
         }
     }
 
-    Ok(())
+    steps
+}
+
+fn send_cursor_noop(enigo: &mut Enigo) -> Result<(), String> {
+    enigo
+        .key(Key::LeftArrow, enigo::Direction::Click)
+        .map_err(|e| format!("Failed to send Left: {}", e))?;
+    enigo
+        .key(Key::RightArrow, enigo::Direction::Click)
+        .map_err(|e| format!("Failed to send Right: {}", e))
 }
 
 const CHUNK_PAUSE: std::time::Duration = std::time::Duration::from_millis(6);
@@ -514,6 +575,84 @@ mod tests {
         // A five-minute ramble is capped at the same size as a long paragraph:
         // beyond this a chunk starts looking like pasted text.
         assert_eq!(typing_chunk_size(&"a".repeat(50_000)), MAX_CHUNK_CHARS);
+    }
+
+    fn typed_text(steps: &[TypingStep]) -> String {
+        steps
+            .iter()
+            .map(|s| match s {
+                TypingStep::Text(t) => t.as_str(),
+                TypingStep::SoftNewline => "\n",
+                TypingStep::CursorNoop => "",
+            })
+            .collect()
+    }
+
+    /// The longest stretch of text with no escape sequence between its pieces.
+    fn longest_run(steps: &[TypingStep]) -> usize {
+        let mut longest = 0;
+        let mut run = 0;
+        for step in steps {
+            match step {
+                TypingStep::Text(t) => run += t.chars().count(),
+                _ => run = 0,
+            }
+            longest = longest.max(run);
+        }
+        longest
+    }
+
+    /// A three-minute ramble read back by a stalled terminal as one event would
+    /// collapse into "[Pasted text #N]"; the cursor no-ops keep every run that
+    /// can coalesce well under Claude Code's limit, and two adjacent runs still
+    /// under it together.
+    #[test]
+    fn a_long_transcript_never_offers_claude_a_paste_sized_run() {
+        let text: String = (0..13_904)
+            .map(|i| {
+                if i % 7 == 6 {
+                    ' '
+                } else {
+                    char::from(b'a' + (i % 26) as u8)
+                }
+            })
+            .collect();
+        let steps = typing_steps(&text);
+        assert_eq!(typed_text(&steps), text);
+        assert!(longest_run(&steps) <= MAX_RUN_CHARS);
+        assert!(2 * MAX_RUN_CHARS < CLAUDE_CODE_PASTE_LIMIT_CHARS);
+        let noops = steps
+            .iter()
+            .filter(|s| **s == TypingStep::CursorNoop)
+            .count();
+        assert!(noops >= 13_904 / MAX_RUN_CHARS - 1, "{noops} no-ops");
+    }
+
+    /// A short dictation needs no cursor games at all.
+    #[test]
+    fn a_sentence_is_typed_without_cursor_noops() {
+        let steps = typing_steps("Okay, so make sure that it's fixed.");
+        assert!(steps.iter().all(|s| matches!(s, TypingStep::Text(_))));
+        assert_eq!(typed_text(&steps), "Okay, so make sure that it's fixed.");
+    }
+
+    /// A newline is its own separator (Shift+Return is an escape sequence too),
+    /// and the count restarts after it — no no-op lands right after a newline.
+    #[test]
+    fn newlines_become_soft_returns_and_reset_the_run() {
+        let line: String = "x".repeat(MAX_RUN_CHARS);
+        let text = format!("{line}\r\n{line}\rtail");
+        let steps = typing_steps(&text);
+        assert_eq!(typed_text(&steps), format!("{line}\n{line}\ntail"));
+        assert_eq!(
+            steps
+                .iter()
+                .filter(|s| **s == TypingStep::SoftNewline)
+                .count(),
+            2
+        );
+        assert!(!steps.contains(&TypingStep::CursorNoop));
+        assert!(longest_run(&steps) <= MAX_RUN_CHARS);
     }
 
     /// Whatever the size, the whole transcript lands: no piece is dropped and
