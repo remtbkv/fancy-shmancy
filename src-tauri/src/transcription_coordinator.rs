@@ -147,6 +147,19 @@ fn classify_lock_event(
     }
 }
 
+/// Whether a press of this shortcut ends a recording that a *different*
+/// transcribe shortcut started. Start with the mouse button and finish with the
+/// keyboard, or hold the key and finish with the mouse: the recording is one
+/// thing, and every transcribe shortcut is a way to end it. Releases never
+/// count — the key that comes up was not the one holding the recording open.
+fn ends_another_recording(
+    is_pressed: bool,
+    binding_id: &str,
+    recording_binding: Option<&str>,
+) -> bool {
+    is_pressed && recording_binding.is_some_and(|recording| recording != binding_id)
+}
+
 /// Serialises all transcription lifecycle events through a single thread
 /// to eliminate race conditions between keyboard shortcuts, signals, and
 /// the async transcribe-paste pipeline.
@@ -365,6 +378,26 @@ impl TranscriptionCoordinator {
                                     continue;
                                 }
                                 last_press = Some(at);
+                            }
+
+                            // Another transcribe shortcut is holding the
+                            // recording open; this press ends it, whether the
+                            // other one is a held key, a latched double tap or
+                            // a hands-free toggle.
+                            if ends_another_recording(
+                                is_pressed,
+                                &binding_id,
+                                recording_binding.as_deref(),
+                            ) {
+                                if let Some(recording) = recording_binding {
+                                    debug!(
+                                        "Press for '{binding_id}' ends the recording '{recording}' started"
+                                    );
+                                    pending_release = None;
+                                    locked = false;
+                                    stop(&app, &mut stage, &recording, &hotkey_string);
+                                    continue;
+                                }
                             }
 
                             if push_to_talk {
@@ -606,6 +639,46 @@ mod tests {
             classify_ptt_event(Some("transcribe"), true, true, "transcribe", None),
             PttAction::CancelRelease
         );
+    }
+
+    /// Started with the mouse button, finished with the keyboard — and the
+    /// other way round. Which shortcut opened the recording does not decide
+    /// which one may close it.
+    #[test]
+    fn a_press_of_another_transcribe_shortcut_ends_the_recording() {
+        assert!(ends_another_recording(
+            true,
+            "transcribe",
+            Some("transcribe_hands_free")
+        ));
+        assert!(ends_another_recording(
+            true,
+            "transcribe_hands_free",
+            Some("transcribe")
+        ));
+        assert!(ends_another_recording(
+            true,
+            "transcribe_with_post_process",
+            Some("transcribe")
+        ));
+    }
+
+    /// The shortcut that started the recording keeps its own rules (hold,
+    /// double tap, toggle), a release is never an instruction, and with
+    /// nothing recording there is nothing to end.
+    #[test]
+    fn only_a_press_from_elsewhere_ends_a_recording() {
+        assert!(!ends_another_recording(
+            true,
+            "transcribe",
+            Some("transcribe")
+        ));
+        assert!(!ends_another_recording(
+            false,
+            "transcribe",
+            Some("transcribe_hands_free")
+        ));
+        assert!(!ends_another_recording(true, "transcribe", None));
     }
 
     // ---------------------------------------------------------------------
