@@ -496,6 +496,44 @@ fn send_cursor_noop(enigo: &mut Enigo) -> Result<(), String> {
         .map_err(|e| format!("Failed to send Right: {}", e))
 }
 
+/// What goes in front of the submit key so the target reads it as a key.
+///
+/// A terminal app reads whatever piled up while it was busy as one chunk, and
+/// Claude Code's tokenizer only splits a Return out of a chunk shorter than 64
+/// bytes (its `a<32 && f.length<64` rule, Claude Code 2.1.268). A Return that
+/// lands in the same read as the last typed-out chunk is therefore part of the
+/// text — it becomes a line break in the prompt, and nothing is sent — and
+/// whether it does depends on how busy the app was at that moment. The
+/// tokenizer does end a text run at an escape sequence whatever the chunk
+/// size, so the cursor no-op in front of the Return leaves it as a token of
+/// its own. Apps that are not typed into are not terminals; they get the bare
+/// key.
+fn submit_preamble(typed_out: bool) -> &'static [TypingStep] {
+    if typed_out {
+        &[TypingStep::CursorNoop]
+    } else {
+        &[]
+    }
+}
+
+/// Press the submit key, in a way the target reads as the submit key.
+pub fn press_submit_key(
+    enigo: &mut Enigo,
+    key: crate::settings::AutoSubmitKey,
+    typed_out: bool,
+) -> Result<(), String> {
+    for step in submit_preamble(typed_out) {
+        match step {
+            TypingStep::CursorNoop => send_cursor_noop(enigo)?,
+            TypingStep::SoftNewline => send_soft_newline(enigo)?,
+            TypingStep::Text(piece) => enigo
+                .text(piece)
+                .map_err(|e| format!("Failed to send text directly: {}", e))?,
+        }
+    }
+    crate::clipboard::send_return_key(enigo, key)
+}
+
 const CHUNK_PAUSE: std::time::Duration = std::time::Duration::from_millis(6);
 /// Small enough that a chunk is never a visible block of text arriving at once —
 /// well under one terminal line, so it still reads as typing rather than a paste.
@@ -560,6 +598,21 @@ mod tests {
         assert_eq!(parse_chord("ctrl+left").unwrap().1, Key::LeftArrow);
         assert_eq!(parse_chord("f13").unwrap().1, Key::F13);
         assert_eq!(parse_chord("shift+backspace").unwrap().1, Key::Backspace);
+    }
+
+    /// The Return into a terminal must arrive as its own token however the
+    /// target's reads coalesce; only an escape sequence in front of it
+    /// guarantees that.
+    #[test]
+    fn a_typed_out_target_gets_the_submit_key_split_off() {
+        assert_eq!(submit_preamble(true), &[TypingStep::CursorNoop]);
+    }
+
+    /// Everywhere else a key event is a key event: nothing to work around,
+    /// and no cursor games in an app that might mean something by them.
+    #[test]
+    fn everywhere_else_the_submit_key_goes_alone() {
+        assert!(submit_preamble(false).is_empty());
     }
 
     #[test]

@@ -830,8 +830,14 @@ fn should_send_auto_submit(
 }
 
 /// Press the configured submit key on its own, with nothing to paste first.
+/// The key still has to land as a key: a transcript typed into a terminal may
+/// be arriving as this is pressed (see `input::press_submit_key`).
 pub fn send_submit_key(app_handle: &AppHandle) -> Result<(), String> {
-    let key = get_settings(app_handle).auto_submit_key;
+    let settings = get_settings(app_handle);
+    let typed_out = crate::paste_target::types_out(
+        &settings,
+        crate::paste_target::frontmost_bundle_id().as_deref(),
+    );
     let enigo_state = app_handle
         .try_state::<EnigoState>()
         .ok_or("Enigo state not initialized")?;
@@ -839,7 +845,7 @@ pub fn send_submit_key(app_handle: &AppHandle) -> Result<(), String> {
         .0
         .lock()
         .map_err(|e| format!("Failed to lock Enigo: {}", e))?;
-    send_return_key(&mut enigo, key)
+    input::press_submit_key(&mut enigo, settings.auto_submit_key, typed_out)
 }
 
 /// Paste, choosing how the text lands and whether the submit key follows.
@@ -943,7 +949,11 @@ pub fn paste_with_submit(
     if submit_flag(&settings, submit, paste_method) {
         std::thread::sleep(Duration::from_millis(50));
         if let Err(error) = with_enigo(&app_handle, |enigo| {
-            send_return_key(enigo, settings.auto_submit_key)
+            input::press_submit_key(
+                enigo,
+                settings.auto_submit_key,
+                style == TypingStyle::TypedOut,
+            )
         }) {
             log::warn!("Paste succeeded, but auto-submit failed: {error}");
         }
