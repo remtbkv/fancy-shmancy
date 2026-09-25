@@ -923,10 +923,27 @@ impl ShortcutAction for TranscribeAction {
                                         submit,
                                         crate::paste_target::typing_style(&get_settings(&ah_clone)),
                                     ) {
-                                        Ok(()) => debug!(
-                                            "Text pasted successfully in {:?}",
-                                            paste_time.elapsed()
-                                        ),
+                                        Ok(()) => {
+                                            debug!(
+                                                "Text pasted successfully in {:?}",
+                                                paste_time.elapsed()
+                                            );
+                                            // A press that came in while the
+                                            // text was still being typed out
+                                            // is for this transcript too; left
+                                            // alone, the finish notification
+                                            // would throw it away.
+                                            if take_pending_submit()
+                                                && !utils::paste_submits(
+                                                    &get_settings(&ah_clone),
+                                                    submit,
+                                                )
+                                            {
+                                                if let Err(e) = utils::send_submit_key(&ah_clone) {
+                                                    error!("Failed to press the submit key: {}", e);
+                                                }
+                                            }
+                                        }
                                         Err(e) => {
                                             error!("Failed to paste transcription: {}", e);
                                             let _ = ah_clone.emit("paste-error", ());

@@ -813,6 +813,11 @@ fn submit_flag(
     should_send_auto_submit(intent, settings.auto_submit, paste_method)
 }
 
+/// Whether a paste with this intent already ends with the submit key.
+pub fn paste_submits(settings: &crate::settings::AppSettings, intent: SubmitIntent) -> bool {
+    submit_flag(settings, intent, settings.paste_method)
+}
+
 fn should_send_auto_submit(
     intent: SubmitIntent,
     auto_submit: bool,
