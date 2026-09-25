@@ -743,7 +743,7 @@ impl ShortcutAction for TranscribeAction {
         let cancel_generation = rm.cancel_generation();
 
         tauri::async_runtime::spawn(async move {
-            let _guard = FinishGuard(ah.clone());
+            let finish_guard = FinishGuard(ah.clone());
             debug!(
                 "Starting async transcription task for binding: {}",
                 binding_id
@@ -894,7 +894,14 @@ impl ShortcutAction for TranscribeAction {
                                 let paste_time = Instant::now();
                                 let final_text = processed.final_text;
                                 let rm_for_paste = Arc::clone(&rm);
+                                // The pipeline is finished once the text is
+                                // typed, not when the paste is queued: the
+                                // finish notification clears a pending
+                                // finish-and-send, and sent from this task it
+                                // raced the main thread and usually won, so the
+                                // transcript landed without the submit key.
                                 ah.run_on_main_thread(move || {
+                                    let _finish_guard = finish_guard;
                                     if rm_for_paste.was_cancelled_since(cancel_generation) {
                                         debug!("Transcription operation cancelled before paste");
                                         utils::hide_recording_overlay(&ah_clone);
