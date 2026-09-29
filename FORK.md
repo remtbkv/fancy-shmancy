@@ -114,6 +114,20 @@ would have caught it: after an upstream rename, grep the old symbol across the
 whole tree. A file that merged cleanly _because_ the fork restructured it is
 exactly where a stale name survives.
 
+**Hand-ports ahead of v0.9.7, 2026-09-28.** These upstream commits were
+applied by hand, not merged, so the next sync will see them on both sides:
+d54c88eb (ring-buffer mic callback), the audio half of df216832 (tail audio:
+resampler flush, VAD `tail_report`), 29bd2c0d, e4ae0d44, dc5bdc9d, 8ef8dd43
+and eb49dc02. Identical hunks merge clean; `recorder.rs` will not. Resolve it
+by keeping the fork's file and grafting only what is new upstream — at the
+time of the port that is 20ada47d's `frame_samples` (the Earshot VAD, not
+taken). The fork's additions in that file: the 10 s ring (upstream 2 s), the
+`CaptureClock` device-gap count, `CapturedTake` (the full pre-VAD take the
+history WAV is written from), and the two extra level values for the flow
+bar. `smoothed.rs` also differs on purpose: a speech onset no longer
+re-emits pre-roll frames the hangover already emitted (upstream only uses the
+`emitted` flag for `tail_report`).
+
 ## Known fork-vs-upstream inconsistencies
 
 - `bindings.ts` spells the settings enums `min_15` / `hour_1`, while serde — and
@@ -128,6 +142,10 @@ exactly where a stale name survives.
   the v0.9.6 sync.
 - `mute_while_recording` is still honored in Rust with no UI to reach it; the
   toggle was dropped on purpose.
+- History WAVs hold the full take (every frame the mic delivered); the model
+  hears the VAD-gated audio, and retry from history re-gates before
+  transcribing. The crash-survival `.partial.wav` is still written from the
+  gated feed, so a take recovered after a crash keeps the VAD's cuts.
 
 ## Building a copy for someone else
 
