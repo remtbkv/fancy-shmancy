@@ -750,7 +750,9 @@ impl ShortcutAction for TranscribeAction {
             );
 
             let stop_recording_time = Instant::now();
-            if let Some(samples) = rm.stop_recording(&binding_id, cancel_generation) {
+            if let Some(take) = rm.stop_recording_take(&binding_id, cancel_generation) {
+                // The model hears the gated audio; history keeps all of it.
+                let (samples, full_take) = (take.gated, take.full);
                 debug!(
                     "Recording stopped and samples retrieved in {:?}, sample count: {}",
                     stop_recording_time.elapsed(),
@@ -774,11 +776,11 @@ impl ShortcutAction for TranscribeAction {
                     set_tray_state(&ah, TrayIconState::Idle);
                 } else {
                     // Save WAV concurrently with transcription
-                    let sample_count = samples.len();
+                    let sample_count = full_take.len();
                     let file_name = format!("handy-{}.wav", chrono::Utc::now().timestamp());
                     let wav_path = hm.recordings_dir().join(&file_name);
                     let wav_path_for_verify = wav_path.clone();
-                    let samples_for_wav = samples.clone();
+                    let samples_for_wav = full_take;
                     let wav_handle = tauri::async_runtime::spawn_blocking(move || {
                         crate::audio_toolkit::save_wav_file(&wav_path, &samples_for_wav)
                     });

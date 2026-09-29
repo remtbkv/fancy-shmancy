@@ -282,7 +282,8 @@ fn repeated_start_stop_cycles_resume_capture_without_leaking_samples() {
 
     let first_samples = reply_rx
         .recv_timeout(Duration::from_secs(1))
-        .expect("first stop reply");
+        .expect("first stop reply")
+        .gated;
     let first_expected = [0.25f32, -0.5, 1.0, 99.0];
     assert_eq!(&first_samples[..first_expected.len()], &first_expected);
     assert!(first_samples[first_expected.len()..]
@@ -315,7 +316,8 @@ fn repeated_start_stop_cycles_resume_capture_without_leaking_samples() {
 
     let second_samples = reply_rx
         .recv_timeout(Duration::from_secs(1))
-        .expect("second stop reply");
+        .expect("second stop reply")
+        .gated;
     let second_expected = [0.75f32, -0.25, 0.5, 199.0];
     assert_eq!(&second_samples[..second_expected.len()], &second_expected);
     assert!(second_samples[second_expected.len()..]
@@ -369,23 +371,28 @@ fn missing_callback_at_stop_marks_stream_for_rebuild_and_returns_samples() {
 
     let samples = reply_rx
         .recv_timeout(Duration::from_secs(3))
-        .expect("pause timeout still returns captured samples");
+        .expect("pause timeout still returns captured samples")
+        .gated;
     assert!(samples.is_empty());
     worker.join().expect("consumer exits after pause timeout");
     assert!(observed_error.load(Ordering::Acquire));
 }
 
 /// Drives `run_consumer` the way a live stream does: the test thread plays the
-/// cpal callback, writing `block`-sample blocks of a counting ramp (1, 2, 3 …)
-/// every `pace`, while the frame callback stalls once for `stall`. Returns the
-/// finished recording and how many samples the callback could not fit.
-fn record_ramp_through_a_stall(
+/// cpal callback, writing `input` at 16 kHz in `block`-sample blocks every
+/// `pace`, while the frame callback stalls once for `stall`. The last block
+/// lands after the stop was requested, as the block in flight at a key-up
+/// does. Returns the finished take and how many samples the callback could
+/// not fit.
+fn record_through_consumer(
+    input: &[f32],
     ring_samples: usize,
-    blocks: usize,
     block: usize,
     pace: Duration,
     stall: Duration,
-) -> (Vec<f32>, u64) {
+    vad: Option<VadConfig>,
+    policy: VadPolicy,
+) -> (super::CapturedTake, u64) {
     let (mut producer, consumer) = RingBuffer::<f32>::new(ring_samples);
     let transport = Arc::new(CaptureTransportState::default());
     let (cmd_tx, cmd_rx) = mpsc::channel();
@@ -394,7 +401,7 @@ fn record_ramp_through_a_stall(
     let worker = thread::spawn(move || {
         let processor = CaptureProcessor::new(
             16_000,
-            None,
+            vad,
             None,
             Some(Arc::new(move |_frame: &[f32]| {
                 // One long hiccup on the consumer thread: a slow disk write
@@ -416,27 +423,21 @@ fn record_ramp_through_a_stall(
 
     let (ready_tx, _ready_rx) = mpsc::channel();
     cmd_tx
-        .send(Cmd::Start(VadPolicy::Disabled, Instant::now(), ready_tx))
+        .send(Cmd::Start(policy, Instant::now(), ready_tx))
         .expect("start");
     // Let the consumer take Start before the first block lands, as it does in
     // the app where Start is sent before the stream has produced much.
     thread::sleep(Duration::from_millis(20));
 
-    let mut next = 1.0f32;
     let mut dropped = 0u64;
-    let mut write_block = |producer: &mut rtrb::Producer<f32>| {
-        let data: Vec<f32> = (0..block)
-            .map(|_| {
-                let v = next;
-                next += 1.0;
-                v
-            })
-            .collect();
-        dropped += block.saturating_sub(producer.slots()) as u64;
-        AudioRecorder::write_input_to_ring(&data, 1, None, producer, &transport);
+    let mut write_block = |producer: &mut rtrb::Producer<f32>, data: &[f32]| {
+        dropped += data.len().saturating_sub(producer.slots()) as u64;
+        AudioRecorder::write_input_to_ring(data, 1, None, producer, &transport);
     };
-    for _ in 0..blocks {
-        write_block(&mut producer);
+    let blocks: Vec<&[f32]> = input.chunks(block).collect();
+    let (boundary, before_stop) = blocks.split_last().expect("at least one block");
+    for data in before_stop {
+        write_block(&mut producer, data);
         thread::sleep(pace);
     }
 
@@ -448,13 +449,37 @@ fn record_ramp_through_a_stall(
         thread::sleep(Duration::from_millis(1));
     }
     // The block in hand when the stop lands was captured before it.
-    write_block(&mut producer);
-    let samples = reply_rx
+    write_block(&mut producer, boundary);
+    let take = reply_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("stop reply");
     cmd_tx.send(Cmd::Shutdown).expect("shutdown");
     worker.join().expect("consumer worker");
-    (samples, dropped)
+    (take, dropped)
+}
+
+/// A counting ramp 1, 2, 3 … — every sample distinct and exact in f32.
+fn ramp(len: usize) -> Vec<f32> {
+    (1..=len).map(|v| v as f32).collect()
+}
+
+fn record_ramp_through_a_stall(
+    ring_samples: usize,
+    blocks: usize,
+    block: usize,
+    pace: Duration,
+    stall: Duration,
+) -> (Vec<f32>, u64) {
+    let (take, dropped) = record_through_consumer(
+        &ramp((blocks + 1) * block),
+        ring_samples,
+        block,
+        pace,
+        stall,
+        None,
+        VadPolicy::Disabled,
+    );
+    (take.gated, dropped)
 }
 
 /// The ramp values present in a recording, with the stop's zero padding cut.
@@ -505,6 +530,89 @@ fn a_stall_longer_than_the_ring_is_counted_exactly_and_the_rest_stays_in_order()
         values.windows(2).all(|w| w[0] < w[1]),
         "reordered or repeated"
     );
+}
+
+/// Speech exactly when a frame's first sample is positive — a gate with no
+/// smoothing, so the test decides frame by frame what the VAD cuts.
+struct PositiveIsSpeech;
+
+impl VoiceActivityDetector for PositiveIsSpeech {
+    fn push_frame<'a>(&'a mut self, frame: &'a [f32]) -> anyhow::Result<VadFrame<'a>> {
+        if frame[0] > 0.0 {
+            Ok(VadFrame::Speech(frame))
+        } else {
+            Ok(VadFrame::Noise)
+        }
+    }
+}
+
+#[test]
+fn the_kept_recording_holds_the_pauses_the_vad_cuts_from_the_model_input() {
+    // 10 frames of speech, a 10-frame pause, 10 more frames of speech. The
+    // gate hands the model 20 frames; the recording kept on disk must be all
+    // 30, in order, sample for sample — what was heard, not what was kept.
+    let frame = 480;
+    let input: Vec<f32> = (0..30 * frame)
+        .map(|i| {
+            let v = (i + 1) as f32;
+            if (10 * frame..20 * frame).contains(&i) {
+                -v
+            } else {
+                v
+            }
+        })
+        .collect();
+    let vad = VadConfig {
+        detector: Arc::new(Mutex::new(Box::new(PositiveIsSpeech))),
+        offline_hangover_frames: 0,
+        streaming_hangover_frames: 0,
+    };
+    let (take, dropped) = record_through_consumer(
+        &input,
+        16_000,
+        160,
+        Duration::from_millis(1),
+        Duration::ZERO,
+        Some(vad),
+        VadPolicy::Offline,
+    );
+
+    assert_eq!(dropped, 0);
+    assert_eq!(take.full, input, "the full take must be the input, whole");
+    let speech: Vec<f32> = input.iter().copied().filter(|&s| s > 0.0).collect();
+    assert_eq!(take.gated, speech, "the model input is still gated");
+}
+
+#[test]
+fn with_the_vad_off_both_cuts_are_the_same_audio() {
+    let input = ramp(10 * 480);
+    let (take, _) = record_through_consumer(
+        &input,
+        16_000,
+        160,
+        Duration::from_millis(1),
+        Duration::ZERO,
+        None,
+        VadPolicy::Disabled,
+    );
+    assert_eq!(take.full, input);
+    assert_eq!(take.gated, take.full);
+}
+
+#[test]
+fn a_new_recording_does_not_inherit_the_last_ones_full_take() {
+    let mut processor = CaptureProcessor::new(16_000, None, None, None, Instant::now());
+    let (ready_tx, _ready_rx) = mpsc::channel();
+    processor.begin_recording(VadPolicy::Disabled, ready_tx);
+    processor.process_raw_chunk(&[1.0; 480], ChunkDisposition::Capture);
+    let _ = processor.finish_recording();
+    assert_eq!(processor.take_full_take().len(), 480);
+
+    let (ready_tx, _ready_rx) = mpsc::channel();
+    processor.begin_recording(VadPolicy::Disabled, ready_tx);
+    processor.process_raw_chunk(&[2.0; 480], ChunkDisposition::Capture);
+    let _ = processor.finish_recording();
+    assert_eq!(processor.take_full_take(), vec![2.0; 480]);
 }
 
 #[test]

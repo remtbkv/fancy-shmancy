@@ -128,21 +128,23 @@ const CANCELLED_KEEP_MIN_SAMPLES: usize = 12_000; // 0.75s at 16 kHz
 /// it into text.
 fn keep_cancelled_recording(
     app: &AppHandle,
-    samples: Option<Vec<f32>>,
+    take: Option<crate::audio_toolkit::CapturedTake>,
     recorder: Arc<AudioRecordingManager>,
 ) {
-    let Some(samples) = samples else {
+    let Some(take) = take else {
         recorder.release_safety_copy();
         return;
     };
-    if samples.len() < CANCELLED_KEEP_MIN_SAMPLES {
+    // Judged on what the VAD heard as speech, as before; kept whole.
+    if take.gated.len() < CANCELLED_KEEP_MIN_SAMPLES {
         debug!(
             "Cancelled recording was only {} samples; not keeping it",
-            samples.len()
+            take.gated.len()
         );
         recorder.release_safety_copy();
         return;
     }
+    let samples = take.full;
 
     let Some(history) = app.try_state::<Arc<crate::managers::history::HistoryManager>>() else {
         recorder.release_safety_copy();

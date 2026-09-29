@@ -4,7 +4,7 @@ use crate::audio_toolkit::{
         SmoothedVad, VAD_OFFLINE_HANGOVER_FRAMES, VAD_ONSET_FRAMES, VAD_PREFILL_FRAMES,
         VAD_STREAMING_HANGOVER_FRAMES,
     },
-    AudioRecorder, SileroVad, VadPolicy,
+    AudioRecorder, CapturedTake, SileroVad, VadPolicy,
 };
 use crate::helpers::clamshell;
 use crate::managers::partial_recording::PartialRecording;
@@ -284,6 +284,20 @@ struct MicrophoneResolution {
 
 /* ──────────────────────────────────────────────────────────────── */
 
+/// The gate a live recording runs through, offline tail. Also used to gate a
+/// kept recording before it goes back to the model (see `retry_gate`), so
+/// both paths hear the same thing.
+pub(crate) fn recording_vad(vad_path: &Path) -> Result<SmoothedVad, anyhow::Error> {
+    let silero = SileroVad::new(vad_path, VAD_THRESHOLD)
+        .map_err(|e| anyhow::anyhow!("Failed to create SileroVad: {}", e))?;
+    Ok(SmoothedVad::new(
+        Box::new(silero),
+        VAD_PREFILL_FRAMES,
+        VAD_OFFLINE_HANGOVER_FRAMES,
+        VAD_ONSET_FRAMES,
+    ))
+}
+
 fn create_audio_recorder(
     vad_path: &Path,
     app_handle: &tauri::AppHandle,
@@ -295,14 +309,7 @@ fn create_audio_recorder(
     // A single Silero engine covers both the offline and streaming policies (never
     // active at once within a recording), so the recorder reconfigures its
     // hangover tail per session rather than keeping two ONNX sessions resident.
-    let silero = SileroVad::new(vad_path, VAD_THRESHOLD)
-        .map_err(|e| anyhow::anyhow!("Failed to create SileroVad: {}", e))?;
-    let smoothed_vad = SmoothedVad::new(
-        Box::new(silero),
-        VAD_PREFILL_FRAMES,
-        VAD_OFFLINE_HANGOVER_FRAMES,
-        VAD_ONSET_FRAMES,
-    );
+    let smoothed_vad = recording_vad(vad_path)?;
 
     // Recorder with VAD, a spectrum-level callback that forwards level updates to
     // the frontend, and an audio-frame callback that feeds live streaming via a
@@ -934,7 +941,21 @@ impl AudioRecordingManager {
         self.cancel_generation.load(Ordering::Acquire) != generation
     }
 
+    // Upstream's entry point, kept so its edits keep merging; the fork's stop
+    // path calls `stop_recording_take`.
+    #[allow(dead_code)]
     pub fn stop_recording(&self, binding_id: &str, cancel_generation: u64) -> Option<Vec<f32>> {
+        self.stop_recording_take(binding_id, cancel_generation)
+            .map(|take| take.gated)
+    }
+
+    /// `stop_recording`, keeping the full recording alongside the model's
+    /// gated input — the full one is what gets saved to history.
+    pub fn stop_recording_take(
+        &self,
+        binding_id: &str,
+        cancel_generation: u64,
+    ) -> Option<CapturedTake> {
         self.invalidate_recording_readiness();
         let mut state = self.state.lock().unwrap();
 
@@ -967,17 +988,21 @@ impl AudioRecordingManager {
                     }
                 }
 
-                let samples = if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
-                    match rec.stop() {
-                        Ok(buf) => buf,
+                let nothing = || CapturedTake {
+                    gated: Vec::new(),
+                    full: Vec::new(),
+                };
+                let mut take = if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
+                    match rec.stop_take() {
+                        Ok(take) => take,
                         Err(e) => {
                             error!("stop() failed: {e}");
-                            Vec::new()
+                            nothing()
                         }
                     }
                 } else {
                     error!("Recorder not available");
-                    Vec::new()
+                    nothing()
                 };
 
                 *self.is_recording.lock().unwrap() = false;
@@ -997,16 +1022,14 @@ impl AudioRecordingManager {
                     return None;
                 }
 
-                // Pad if very short
-                let s_len = samples.len();
+                // Pad if very short. Only the model's input: the kept recording
+                // stays exactly what the microphone heard.
+                let s_len = take.gated.len();
                 // debug!("Got {} samples", s_len);
                 if s_len < WHISPER_SAMPLE_RATE && s_len > 0 {
-                    let mut padded = samples;
-                    padded.resize(WHISPER_SAMPLE_RATE * 5 / 4, 0.0);
-                    Some(padded)
-                } else {
-                    Some(samples)
+                    take.gated.resize(WHISPER_SAMPLE_RATE * 5 / 4, 0.0);
                 }
+                Some(take)
             }
             _ => None,
         }
@@ -1035,7 +1058,7 @@ impl AudioRecordingManager {
     /// Same, but hands back whatever the microphone had captured. A cancel is
     /// usually a mistake — the audio is the only copy of what was said, so the
     /// caller gets the chance to keep it before it is dropped.
-    pub fn cancel_recording_returning_samples(&self) -> Option<Vec<f32>> {
+    pub fn cancel_recording_returning_samples(&self) -> Option<CapturedTake> {
         let mut captured = None;
         self.invalidate_recording_readiness();
         self.cancel_generation.fetch_add(1, Ordering::AcqRel);
@@ -1047,7 +1070,7 @@ impl AudioRecordingManager {
                 drop(state);
 
                 if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
-                    captured = rec.stop().ok();
+                    captured = rec.stop_take().ok();
                 }
 
                 *self.is_recording.lock().unwrap() = false;

@@ -97,6 +97,7 @@ pub async fn retry_history_entry_transcription(
     let audio_path = history_manager.get_audio_file_path(&entry.file_name);
     let samples = crate::audio_toolkit::read_wav_samples(&audio_path)
         .map_err(|e| format!("Failed to load audio: {}", e))?;
+    let samples = crate::managers::retry_gate::gate_for_transcription(&app, samples);
 
     if samples.is_empty() {
         return Err("Recording has no audio samples".to_string());

@@ -24,8 +24,19 @@ enum Cmd {
     /// Begin capturing. Carries the send timestamp so the consumer can log how
     /// long the command sat in the channel, plus a one-shot first-sample acknowledgement.
     Start(VadPolicy, Instant, mpsc::Sender<()>),
-    Stop(mpsc::Sender<Vec<f32>>),
+    Stop(mpsc::Sender<CapturedTake>),
     Shutdown,
+}
+
+/// What one recording captured, in two cuts of the same 16 kHz audio.
+pub struct CapturedTake {
+    /// What the VAD let through: the model's input, and the only thing the
+    /// live feeds (streaming, work-ahead, safety copy) ever saw.
+    pub gated: Vec<f32>,
+    /// Every frame the microphone delivered, pauses included. This is the
+    /// recording kept on disk: the gate cuts the room tone between phrases
+    /// out of `gated`, and played back those cuts are jumps in the audio.
+    pub full: Vec<f32>,
 }
 
 // Ring capacity absorbs consumer stalls without adding latency during normal
@@ -454,6 +465,11 @@ impl AudioRecorder {
     }
 
     pub fn stop(&self) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+        Ok(self.stop_take()?.gated)
+    }
+
+    /// Stop, and hand back the full recording alongside the gated one.
+    pub fn stop_take(&self) -> Result<CapturedTake, Box<dyn std::error::Error>> {
         let tx = self
             .cmd_tx
             .as_ref()
@@ -801,6 +817,8 @@ struct CaptureProcessor {
     // ---- recording-scoped: reset by `begin_recording` ------------------- //
     vad_policy: VadPolicy,
     processed_samples: Vec<f32>,
+    /// Every 16 kHz frame of the recording, before the VAD (see `CapturedTake`).
+    full_take: Vec<f32>,
     awaiting_first_captured_chunk: Option<Instant>,
     capture_ready_tx: Option<mpsc::Sender<()>>,
     total_dropped_samples: u64,
@@ -849,6 +867,7 @@ impl CaptureProcessor {
             first_chunk_logged: false,
             vad_policy: VadPolicy::Offline,
             processed_samples: Vec::new(),
+            full_take: Vec::new(),
             awaiting_first_captured_chunk: None,
             capture_ready_tx: None,
             total_dropped_samples: 0,
@@ -864,6 +883,7 @@ impl CaptureProcessor {
         self.overrun_warning_logged = false;
         self.vad_policy = policy;
         self.processed_samples.clear();
+        self.full_take.clear();
         self.visualizer.reset();
         self.frame_resampler.reset();
         if policy != VadPolicy::Disabled {
@@ -930,6 +950,7 @@ impl CaptureProcessor {
 
         let vad_policy = self.vad_policy;
         self.frame_resampler.push(raw, |frame: &[f32]| {
+            self.full_take.extend_from_slice(frame);
             handle_frame(
                 frame,
                 vad_policy,
@@ -973,6 +994,7 @@ impl CaptureProcessor {
     fn finish_recording(&mut self) -> Vec<f32> {
         let vad_policy = self.vad_policy;
         self.frame_resampler.finish(|frame: &[f32]| {
+            self.full_take.extend_from_slice(frame);
             handle_frame(
                 frame,
                 vad_policy,
@@ -1009,6 +1031,12 @@ impl CaptureProcessor {
             );
         }
         std::mem::take(&mut self.processed_samples)
+    }
+
+    /// The whole recording, pauses included. Call after `finish_recording`,
+    /// which flushes the last frames into it.
+    fn take_full_take(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.full_take)
     }
 }
 
@@ -1097,7 +1125,10 @@ fn run_consumer(
                         processor
                             .observe_overrun(transport.overrun_samples.swap(0, Ordering::AcqRel));
                         report_device_gaps(transport.take_device_gaps());
-                        let samples = processor.finish_recording();
+                        let samples = CapturedTake {
+                            gated: processor.finish_recording(),
+                            full: processor.take_full_take(),
+                        };
                         if !pause_timed_out {
                             // Resume before stop() returns so an immediate recording
                             // cannot lose its first callback to this pause request.
