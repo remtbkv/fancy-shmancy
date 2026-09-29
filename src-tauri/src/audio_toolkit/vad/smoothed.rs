@@ -1,9 +1,18 @@
 use super::{
-    VadFrame, VoiceActivityDetector, VAD_FLOOR_MIN_FRAMES, VAD_FLOOR_WINDOW_FRAMES,
+    VadFrame, VadTailReport, VoiceActivityDetector, VAD_FLOOR_MIN_FRAMES, VAD_FLOOR_WINDOW_FRAMES,
     VAD_RESCUE_MARGIN_DB, VAD_RESCUE_MIN_PROB,
 };
 use anyhow::Result;
 use std::collections::VecDeque;
+
+/// One pre-roll buffer slot. `emitted` keeps a speech onset from handing the
+/// recording a frame it already has; `voiced` feeds the end-of-recording
+/// `tail_report()` diagnostic.
+struct BufferedFrame {
+    samples: Vec<f32>,
+    emitted: bool,
+    voiced: bool,
+}
 
 pub struct SmoothedVad {
     inner_vad: Box<dyn VoiceActivityDetector>,
@@ -11,7 +20,7 @@ pub struct SmoothedVad {
     hangover_frames: usize,
     onset_frames: usize,
 
-    frame_buffer: VecDeque<Vec<f32>>,
+    frame_buffer: VecDeque<BufferedFrame>,
     floor_history: VecDeque<f32>,
     hangover_counter: usize,
     onset_counter: usize,
@@ -58,6 +67,12 @@ impl SmoothedVad {
             temp_out: Vec::new(),
         }
     }
+
+    fn mark_last_emitted(&mut self) {
+        if let Some(frame) = self.frame_buffer.back_mut() {
+            frame.emitted = true;
+        }
+    }
 }
 
 impl VoiceActivityDetector for SmoothedVad {
@@ -67,7 +82,11 @@ impl VoiceActivityDetector for SmoothedVad {
 
     fn push_frame<'a>(&'a mut self, frame: &'a [f32]) -> Result<VadFrame<'a>> {
         // 1. Buffer every incoming frame for possible pre-roll
-        self.frame_buffer.push_back(frame.to_vec());
+        self.frame_buffer.push_back(BufferedFrame {
+            samples: frame.to_vec(),
+            emitted: false,
+            voiced: false,
+        });
         while self.frame_buffer.len() > self.prefill_frames + 1 {
             self.frame_buffer.pop_front();
         }
@@ -90,6 +109,9 @@ impl VoiceActivityDetector for SmoothedVad {
             is_voice = level > floor_estimate(&self.floor_history) + VAD_RESCUE_MARGIN_DB;
         }
         self.last_raw_voice = is_voice;
+        if let Some(last) = self.frame_buffer.back_mut() {
+            last.voiced = is_voice;
+        }
 
         match (self.in_speech, is_voice) {
             // Potential start of speech - need to accumulate onset frames
@@ -101,10 +123,16 @@ impl VoiceActivityDetector for SmoothedVad {
                     self.hangover_counter = self.hangover_frames;
                     self.onset_counter = 0; // Reset for next time
 
-                    // Collect prefill + current frame
+                    // Collect prefill + current frame. A pause shorter than the
+                    // prefill leaves hangover frames in the buffer that already
+                    // went out; handing them over again played the end of the
+                    // last phrase twice.
                     self.temp_out.clear();
-                    for buf in &self.frame_buffer {
-                        self.temp_out.extend(buf);
+                    for buffered in self.frame_buffer.iter_mut() {
+                        if !buffered.emitted {
+                            self.temp_out.extend(buffered.samples.iter());
+                            buffered.emitted = true;
+                        }
                     }
                     Ok(VadFrame::Speech(&self.temp_out))
                 } else {
@@ -116,6 +144,7 @@ impl VoiceActivityDetector for SmoothedVad {
             // Ongoing Speech
             (true, true) => {
                 self.hangover_counter = self.hangover_frames;
+                self.mark_last_emitted();
                 Ok(VadFrame::Speech(frame))
             }
 
@@ -123,6 +152,7 @@ impl VoiceActivityDetector for SmoothedVad {
             (true, false) => {
                 if self.hangover_counter > 0 {
                     self.hangover_counter -= 1;
+                    self.mark_last_emitted();
                     Ok(VadFrame::Speech(frame))
                 } else {
                     self.in_speech = false;
@@ -140,6 +170,32 @@ impl VoiceActivityDetector for SmoothedVad {
 
     fn set_hangover_frames(&mut self, frames: usize) {
         self.hangover_frames = frames;
+    }
+
+    /// Trailing run of withheld frames plus smoothing state. Interior
+    /// withheld frames (before already-emitted speech) are not counted.
+    fn tail_report(&self) -> Option<VadTailReport> {
+        let mut withheld_frames = 0;
+        let mut withheld_voiced_frames = 0;
+        for frame in self
+            .frame_buffer
+            .iter()
+            .rev()
+            .take_while(|frame| !frame.emitted)
+        {
+            withheld_frames += 1;
+            if frame.voiced {
+                withheld_voiced_frames += 1;
+            }
+        }
+
+        Some(VadTailReport {
+            withheld_frames,
+            withheld_voiced_frames,
+            in_speech: self.in_speech,
+            onset_counter: self.onset_counter,
+            hangover_counter: self.hangover_counter,
+        })
     }
 
     fn reset(&mut self) {
@@ -221,6 +277,125 @@ mod tests {
         // must not open the gate, or a minute of typing becomes a paragraph of
         // invented text.
         assert_eq!(feed(&mut vad, &tone(0.1), 10), 0);
+    }
+
+    /// Inner VAD that replays a scripted voice/no-voice sequence.
+    struct ScriptedVad {
+        script: VecDeque<bool>,
+    }
+
+    impl ScriptedVad {
+        fn new(script: &[bool]) -> Self {
+            Self {
+                script: script.iter().copied().collect(),
+            }
+        }
+    }
+
+    impl VoiceActivityDetector for ScriptedVad {
+        fn push_frame<'a>(&'a mut self, frame: &'a [f32]) -> Result<VadFrame<'a>> {
+            if self.script.pop_front().unwrap_or(false) {
+                Ok(VadFrame::Speech(frame))
+            } else {
+                Ok(VadFrame::Noise)
+            }
+        }
+    }
+
+    /// Every sample of frame `id` carries `id`, so the output names exactly
+    /// which input frames reached the recording, and in what order.
+    fn frame_ids(vad: &mut SmoothedVad, count: usize) -> Vec<usize> {
+        let mut ids = Vec::new();
+        for id in 1..=count {
+            let frame = vec![id as f32; 4];
+            if let VadFrame::Speech(out) = vad.push_frame(&frame).unwrap() {
+                for chunk in out.chunks(4) {
+                    ids.push(chunk[0] as usize);
+                }
+            }
+        }
+        ids
+    }
+
+    #[test]
+    fn a_short_pause_does_not_replay_the_frames_before_it() {
+        // prefill 3, hangover 2, onset 2. Speech, the two hangover frames, one
+        // dropped frame, then speech again: the onset's pre-roll reaches back
+        // over frame 4, which the hangover already handed out. Recordings
+        // carried that repeat — up to 390 ms of the end of a phrase, twice.
+        let script = [true, true, false, false, false, true, true];
+        let mut vad = SmoothedVad::new(Box::new(ScriptedVad::new(&script)), 3, 2, 2);
+        assert_eq!(frame_ids(&mut vad, script.len()), vec![1, 2, 3, 4, 5, 6, 7]);
+    }
+
+    #[test]
+    fn no_frame_reaches_the_recording_twice_or_out_of_order() {
+        // Any voice pattern, any pause length: what comes out is an ordered
+        // subset of what went in. Scripts alternate runs of speech and pause
+        // so pauses land on both sides of the hangover + prefill span, which
+        // is where a repeat used to come from.
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut next = |bound: u64| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) % bound
+        };
+        for _ in 0..500 {
+            let mut script = Vec::new();
+            let mut voiced = next(2) == 0;
+            while script.len() < 200 {
+                let run = 1 + next(if voiced { 20 } else { 45 }) as usize;
+                script.extend(std::iter::repeat_n(voiced, run));
+                voiced = !voiced;
+            }
+            let mut vad = SmoothedVad::new(Box::new(ScriptedVad::new(&script)), 15, 15, 2);
+            let ids = frame_ids(&mut vad, script.len());
+            assert!(
+                ids.windows(2).all(|w| w[0] < w[1]),
+                "script {script:?} produced {ids:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_pause_longer_than_the_prefill_still_gets_its_full_preroll() {
+        // prefill 3, hangover 1, onset 2: silence from frame 4 on, so frame 4
+        // falls outside the pre-roll and stays dropped; the onset at 8 hands
+        // back 5, 6, 7, 8 — the full prefill plus the onset frame.
+        let script = [true, true, false, false, false, false, true, true];
+        let mut vad = SmoothedVad::new(Box::new(ScriptedVad::new(&script)), 3, 1, 2);
+        assert_eq!(frame_ids(&mut vad, script.len()), vec![1, 2, 3, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn tail_report_counts_withheld_onset_tail() {
+        // One voiced frame at the end: onset (2 frames) never confirms, so
+        // both trailing frames are withheld and one of them is voiced.
+        let mut vad = SmoothedVad::new(Box::new(ScriptedVad::new(&[false, true])), 3, 2, 2);
+        assert!(!vad.push_frame(&tone(0.01)).unwrap().is_speech());
+        assert!(!vad.push_frame(&tone(0.02)).unwrap().is_speech());
+
+        let report = vad.tail_report().expect("smoothed VAD always reports");
+        assert_eq!(report.withheld_frames, 2);
+        assert_eq!(report.withheld_voiced_frames, 1);
+        assert_eq!(report.onset_counter, 1);
+        assert!(!report.in_speech);
+    }
+
+    #[test]
+    fn tail_report_counts_only_trailing_run() {
+        let script = [true, true, false, false, false, false];
+        let mut vad = SmoothedVad::new(Box::new(ScriptedVad::new(&script)), 3, 2, 2);
+        for _ in 0..4 {
+            let _ = vad.push_frame(&tone(0.01)).unwrap();
+        }
+        assert!(!vad.push_frame(&tone(0.01)).unwrap().is_speech()); // past hangover
+        assert!(!vad.push_frame(&tone(0.01)).unwrap().is_speech());
+
+        let report = vad.tail_report().unwrap();
+        assert_eq!(report.withheld_frames, 2);
+        assert_eq!(report.withheld_voiced_frames, 0);
     }
 
     #[test]
