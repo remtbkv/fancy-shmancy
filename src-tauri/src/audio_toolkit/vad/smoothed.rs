@@ -100,7 +100,16 @@ impl VoiceActivityDetector for SmoothedVad {
             self.floor_history.pop_front();
         }
 
-        let mut is_voice = self.inner_vad.is_voice(frame)?;
+        // Every caller keeps a frame the detector could not judge rather than
+        // risk dropping speech, so it counts as handed over: a later onset's
+        // pre-roll must not hand it over again.
+        let mut is_voice = match self.inner_vad.is_voice(frame) {
+            Ok(is_voice) => is_voice,
+            Err(e) => {
+                self.mark_last_emitted();
+                return Err(e);
+            }
+        };
         if !is_voice
             && self.floor_history.len() >= VAD_FLOOR_MIN_FRAMES
             && self.inner_vad.last_prob() > VAD_RESCUE_MIN_PROB
@@ -293,6 +302,12 @@ mod tests {
     }
 
     impl VoiceActivityDetector for ScriptedVad {
+        /// Certain of every "no": the level rescue must not overrule the
+        /// script, or scripted pauses turn into speech as frame levels vary.
+        fn last_prob(&self) -> f32 {
+            0.0
+        }
+
         fn push_frame<'a>(&'a mut self, frame: &'a [f32]) -> Result<VadFrame<'a>> {
             if self.script.pop_front().unwrap_or(false) {
                 Ok(VadFrame::Speech(frame))
@@ -300,6 +315,44 @@ mod tests {
                 Ok(VadFrame::Noise)
             }
         }
+    }
+
+    /// What should reach the recording, stated as frame indices rather than a
+    /// buffer: every frame of a speech run and its hangover, plus, at each
+    /// onset, the `prefill` frames before it — each frame once, in order.
+    fn expected_ids(script: &[bool], prefill: usize, hangover: usize, onset: usize) -> Vec<usize> {
+        let mut keep = vec![false; script.len()];
+        let (mut in_speech, mut onset_count, mut tail) = (false, 0usize, 0usize);
+        for (i, &voiced) in script.iter().enumerate() {
+            match (in_speech, voiced) {
+                (false, true) => {
+                    onset_count += 1;
+                    if onset_count >= onset {
+                        in_speech = true;
+                        tail = hangover;
+                        onset_count = 0;
+                        keep[i.saturating_sub(prefill)..=i].fill(true);
+                    }
+                }
+                (true, true) => {
+                    tail = hangover;
+                    keep[i] = true;
+                }
+                (true, false) => {
+                    if tail > 0 {
+                        tail -= 1;
+                        keep[i] = true;
+                    } else {
+                        in_speech = false;
+                    }
+                }
+                (false, false) => onset_count = 0,
+            }
+        }
+        (0..script.len())
+            .filter(|&i| keep[i])
+            .map(|i| i + 1)
+            .collect()
     }
 
     /// Every sample of frame `id` carries `id`, so the output names exactly
@@ -351,11 +404,61 @@ mod tests {
             }
             let mut vad = SmoothedVad::new(Box::new(ScriptedVad::new(&script)), 15, 15, 2);
             let ids = frame_ids(&mut vad, script.len());
-            assert!(
-                ids.windows(2).all(|w| w[0] < w[1]),
-                "script {script:?} produced {ids:?}"
-            );
+            assert_eq!(ids, expected_ids(&script, 15, 15, 2), "script {script:?}");
         }
+    }
+
+    /// Fails on one chosen frame, then answers from the script.
+    struct FailsOnce {
+        script: VecDeque<bool>,
+        fail_at: usize,
+        seen: usize,
+    }
+
+    impl VoiceActivityDetector for FailsOnce {
+        fn last_prob(&self) -> f32 {
+            0.0
+        }
+
+        fn push_frame<'a>(&'a mut self, frame: &'a [f32]) -> Result<VadFrame<'a>> {
+            self.seen += 1;
+            let voiced = self.script.pop_front().unwrap_or(false);
+            if self.seen == self.fail_at {
+                anyhow::bail!("inference failed");
+            }
+            Ok(if voiced {
+                VadFrame::Speech(frame)
+            } else {
+                VadFrame::Noise
+            })
+        }
+    }
+
+    #[test]
+    fn a_frame_the_detector_failed_on_is_not_handed_over_twice() {
+        // Frame 5 errors inside a pause; the caller keeps it, as the recorder
+        // does. Speech resumes within the pre-roll, which must not replay it.
+        let script = [true, true, false, false, false, false, true, true];
+        let mut vad = SmoothedVad::new(
+            Box::new(FailsOnce {
+                script: script.iter().copied().collect(),
+                fail_at: 5,
+                seen: 0,
+            }),
+            3,
+            1,
+            2,
+        );
+        let mut ids = Vec::new();
+        for id in 1..=script.len() {
+            let frame = vec![id as f32; 4];
+            match vad.push_frame(&frame) {
+                Ok(VadFrame::Speech(out)) => ids.extend(out.chunks(4).map(|c| c[0] as usize)),
+                Ok(VadFrame::Noise) => {}
+                Err(_) => ids.push(id),
+            }
+        }
+        assert!(ids.windows(2).all(|w| w[0] < w[1]), "{ids:?}");
     }
 
     #[test]

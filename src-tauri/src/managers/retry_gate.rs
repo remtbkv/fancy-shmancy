@@ -4,19 +4,31 @@
 //! hears what the live transcription heard rather than the pauses and room tone
 //! between phrases, which the model will happily write sentences over.
 
-use crate::audio_toolkit::vad::{VadFrame, VoiceActivityDetector};
+use crate::audio_toolkit::vad::{VadFrame, VoiceActivityDetector, VAD_STREAMING_HANGOVER_FRAMES};
+use crate::managers::audio::pad_short_model_input;
+use crate::managers::model::ModelManager;
 use crate::settings::get_settings;
 use log::warn;
+use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 /// Silero's frame: 30 ms at 16 kHz, the size the live path feeds it.
 const FRAME: usize = 480;
 
-/// The audio of a kept recording, gated the way a live recording is.
+/// The audio of a kept recording, gated and padded the way a live recording
+/// is for the model currently selected. Blocking: builds a Silero session and
+/// runs it over the whole recording, so call it off the async runtime.
 pub fn gate_for_transcription(app: &AppHandle, samples: Vec<f32>) -> Vec<f32> {
-    if !get_settings(app).vad_enabled {
+    let settings = get_settings(app);
+    if !settings.vad_enabled {
         return samples;
     }
+    // Same choice the live start makes: a streaming-capable model records with
+    // the longer post-speech tail.
+    let streaming = app
+        .try_state::<Arc<ModelManager>>()
+        .and_then(|models| models.get_model_info(&settings.selected_model))
+        .is_some_and(|model| model.supports_streaming);
     let vad = app
         .path()
         .resolve(
@@ -26,7 +38,14 @@ pub fn gate_for_transcription(app: &AppHandle, samples: Vec<f32>) -> Vec<f32> {
         .map_err(anyhow::Error::from)
         .and_then(|path| crate::managers::audio::recording_vad(&path));
     match vad {
-        Ok(mut vad) => gate(&mut vad, &samples),
+        Ok(mut vad) => {
+            if streaming {
+                vad.set_hangover_frames(VAD_STREAMING_HANGOVER_FRAMES);
+            }
+            let mut gated = gate(&mut vad, &samples);
+            pad_short_model_input(&mut gated);
+            gated
+        }
         Err(e) => {
             // Better an ungated retry than none.
             warn!("Could not build the VAD for a retry, sending the whole recording: {e}");
@@ -101,6 +120,21 @@ mod tests {
         let mut expected = vec![0.5; FRAME + 100];
         expected.resize(2 * FRAME, 0.0);
         assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn a_short_retry_is_padded_like_a_short_live_take() {
+        // Half a second of speech reaches the model as 1.25 s, as it does live.
+        let mut out = gate(&mut PositiveIsSpeech, &vec![0.5; 16 * FRAME]);
+        pad_short_model_input(&mut out);
+        assert_eq!(out.len(), 20_000);
+        assert!(out[..16 * FRAME].iter().all(|&s| s == 0.5));
+        assert!(out[16 * FRAME..].iter().all(|&s| s == 0.0));
+
+        // Nothing kept stays nothing: no speech is not padded into silence.
+        let mut none = gate(&mut PositiveIsSpeech, &vec![-0.5; 4 * FRAME]);
+        pad_short_model_input(&mut none);
+        assert!(none.is_empty());
     }
 
     #[test]

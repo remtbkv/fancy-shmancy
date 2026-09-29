@@ -379,20 +379,22 @@ fn missing_callback_at_stop_marks_stream_for_rebuild_and_returns_samples() {
 }
 
 /// Drives `run_consumer` the way a live stream does: the test thread plays the
-/// cpal callback, writing `input` at 16 kHz in `block`-sample blocks every
+/// cpal callback, writing `input` at `in_rate` in `block`-sample blocks every
 /// `pace`, while the frame callback stalls once for `stall`. The last block
 /// lands after the stop was requested, as the block in flight at a key-up
-/// does. Returns the finished take and how many samples the callback could
-/// not fit.
+/// does. Returns the finished take, whose `dropped_samples` is the recorder's
+/// own count of what the ring could not hold.
+#[allow(clippy::too_many_arguments)]
 fn record_through_consumer(
     input: &[f32],
+    in_rate: u32,
     ring_samples: usize,
     block: usize,
     pace: Duration,
     stall: Duration,
     vad: Option<VadConfig>,
     policy: VadPolicy,
-) -> (super::CapturedTake, u64) {
+) -> super::CapturedTake {
     let (mut producer, consumer) = RingBuffer::<f32>::new(ring_samples);
     let transport = Arc::new(CaptureTransportState::default());
     let (cmd_tx, cmd_rx) = mpsc::channel();
@@ -400,7 +402,7 @@ fn record_through_consumer(
     let worker_transport = Arc::clone(&transport);
     let worker = thread::spawn(move || {
         let processor = CaptureProcessor::new(
-            16_000,
+            in_rate,
             vad,
             None,
             Some(Arc::new(move |_frame: &[f32]| {
@@ -429,9 +431,7 @@ fn record_through_consumer(
     // the app where Start is sent before the stream has produced much.
     thread::sleep(Duration::from_millis(20));
 
-    let mut dropped = 0u64;
-    let mut write_block = |producer: &mut rtrb::Producer<f32>, data: &[f32]| {
-        dropped += data.len().saturating_sub(producer.slots()) as u64;
+    let write_block = |producer: &mut rtrb::Producer<f32>, data: &[f32]| {
         AudioRecorder::write_input_to_ring(data, 1, None, producer, &transport);
     };
     let blocks: Vec<&[f32]> = input.chunks(block).collect();
@@ -455,7 +455,7 @@ fn record_through_consumer(
         .expect("stop reply");
     cmd_tx.send(Cmd::Shutdown).expect("shutdown");
     worker.join().expect("consumer worker");
-    (take, dropped)
+    take
 }
 
 /// A counting ramp 1, 2, 3 … — every sample distinct and exact in f32.
@@ -470,8 +470,9 @@ fn record_ramp_through_a_stall(
     pace: Duration,
     stall: Duration,
 ) -> (Vec<f32>, u64) {
-    let (take, dropped) = record_through_consumer(
+    let take = record_through_consumer(
         &ramp((blocks + 1) * block),
+        16_000,
         ring_samples,
         block,
         pace,
@@ -479,7 +480,7 @@ fn record_ramp_through_a_stall(
         None,
         VadPolicy::Disabled,
     );
-    (take.gated, dropped)
+    (take.gated, take.dropped_samples)
 }
 
 /// The ramp values present in a recording, with the stop's zero padding cut.
@@ -514,7 +515,7 @@ fn a_consumer_stall_the_ring_can_hold_loses_nothing() {
 #[test]
 fn a_stall_longer_than_the_ring_is_counted_exactly_and_the_rest_stays_in_order() {
     // 100 ms ring, 400 ms stall: audio has to be lost, and every lost sample
-    // must be one the callback counted — nothing vanishes uncounted.
+    // must be one the recorder counted — nothing vanishes uncounted.
     let (samples, dropped) = record_ramp_through_a_stall(
         1_600,
         60,
@@ -567,8 +568,9 @@ fn the_kept_recording_holds_the_pauses_the_vad_cuts_from_the_model_input() {
         offline_hangover_frames: 0,
         streaming_hangover_frames: 0,
     };
-    let (take, dropped) = record_through_consumer(
+    let take = record_through_consumer(
         &input,
+        16_000,
         16_000,
         160,
         Duration::from_millis(1),
@@ -577,7 +579,7 @@ fn the_kept_recording_holds_the_pauses_the_vad_cuts_from_the_model_input() {
         VadPolicy::Offline,
     );
 
-    assert_eq!(dropped, 0);
+    assert_eq!(take.dropped_samples, 0);
     assert_eq!(take.full, input, "the full take must be the input, whole");
     let speech: Vec<f32> = input.iter().copied().filter(|&s| s > 0.0).collect();
     assert_eq!(take.gated, speech, "the model input is still gated");
@@ -586,8 +588,9 @@ fn the_kept_recording_holds_the_pauses_the_vad_cuts_from_the_model_input() {
 #[test]
 fn with_the_vad_off_both_cuts_are_the_same_audio() {
     let input = ramp(10 * 480);
-    let (take, _) = record_through_consumer(
+    let take = record_through_consumer(
         &input,
+        16_000,
         16_000,
         160,
         Duration::from_millis(1),
@@ -596,6 +599,41 @@ fn with_the_vad_off_both_cuts_are_the_same_audio() {
         VadPolicy::Disabled,
     );
     assert_eq!(take.full, input);
+    assert_eq!(take.gated, take.full);
+}
+
+#[test]
+fn at_48k_the_last_words_reach_the_kept_recording() {
+    // A built-in mic runs at 48 kHz, so the recording passes through the
+    // resampler. The last thing said sits in the block in flight at the key-up
+    // and in the resampler's delay line; both used to be dropped. A burst in
+    // the final 200 samples must survive to the end of the full take, and the
+    // take must be exactly the resampled length, framed.
+    let mut input = vec![0.0f32; 48_000];
+    let n = input.len();
+    input[n - 200..].fill(0.5);
+    let take = record_through_consumer(
+        &input,
+        48_000,
+        96_000,
+        512,
+        Duration::from_millis(1),
+        Duration::ZERO,
+        None,
+        VadPolicy::Disabled,
+    );
+
+    assert_eq!(take.dropped_samples, 0);
+    let tail = &take.full[take.full.len() - 480..];
+    let peak = tail.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+    assert!(peak > 0.3, "the closing burst was lost (peak {peak})");
+    // 48000 in -> 16000 out + the resampler's delay, padded to 30 ms frames.
+    assert_eq!(take.full.len() % 480, 0);
+    assert!(
+        (16_000..16_000 + 2 * 480).contains(&take.full.len()),
+        "full take is {} samples",
+        take.full.len()
+    );
     assert_eq!(take.gated, take.full);
 }
 
@@ -647,6 +685,48 @@ fn device_clock_counts_a_skipped_block_and_its_length() {
     assert_eq!(gaps, 1);
     assert!((10_600..=10_700).contains(&micros), "gap was {micros} µs");
     // Reading clears the tally for the next recording.
+    assert_eq!(transport.take_device_gaps(), (0, 0));
+}
+
+#[test]
+fn device_clock_follows_blocks_of_changing_size() {
+    // Some devices alternate block sizes; each block is measured by its own
+    // length, so back-to-back delivery still reads as whole.
+    let transport = CaptureTransportState::default();
+    let mut clock = CaptureClock::new(48_000);
+    let mut t_ns: i64 = 1_000_000_000;
+    for i in 0..100 {
+        let frames = if i % 3 == 0 { 480 } else { 512 };
+        clock.observe(instant(t_ns), frames, &transport);
+        t_ns += frames as i64 * 1_000_000_000 / 48_000;
+    }
+    assert_eq!(transport.take_device_gaps(), (0, 0));
+}
+
+#[test]
+fn device_clock_ignores_backward_and_invalid_stamps() {
+    let transport = CaptureTransportState::default();
+    let mut clock = CaptureClock::new(48_000);
+    clock.observe(instant(2_000_000_000), 512, &transport);
+    // A stamp that goes backwards says nothing about missing audio.
+    clock.observe(instant(1_900_000_000), 512, &transport);
+    // cpal's zero instant is an invalid host time, not "the dawn of uptime",
+    // and the valid block after it must not read as a gap of that size.
+    clock.observe(cpal::StreamInstant::new(0, 0), 512, &transport);
+    clock.observe(instant(1_910_666_667), 512, &transport);
+    assert_eq!(transport.take_device_gaps(), (0, 0));
+}
+
+#[test]
+fn a_pause_in_delivery_before_a_take_is_not_billed_to_it() {
+    // An always-on stream idles; the Mac sleeps; a recording starts; blocks
+    // resume. The start rebases the clock, so the sleep is not a "gap".
+    let transport = CaptureTransportState::default();
+    let mut clock = CaptureClock::new(48_000);
+    clock.observe(instant(1_000_000_000), 512, &transport);
+    transport.clock_rebase.store(true, Ordering::Release);
+    clock.observe(instant(600_000_000_000), 512, &transport);
+    clock.observe(instant(600_010_666_667), 512, &transport);
     assert_eq!(transport.take_device_gaps(), (0, 0));
 }
 

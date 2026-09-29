@@ -239,6 +239,15 @@ fn restore_mute(prev_muted: Option<bool>) {
 
 const WHISPER_SAMPLE_RATE: usize = 16000;
 
+/// Audio under a second goes to the model padded with silence to 1.25 s. Both
+/// the live stop and a retry from history do this, so they send the same thing.
+pub(crate) fn pad_short_model_input(samples: &mut Vec<f32>) {
+    let s_len = samples.len();
+    if s_len < WHISPER_SAMPLE_RATE && s_len > 0 {
+        samples.resize(WHISPER_SAMPLE_RATE * 5 / 4, 0.0);
+    }
+}
+
 /* ──────────────────────────────────────────────────────────────── */
 
 #[derive(Clone, Debug)]
@@ -991,6 +1000,7 @@ impl AudioRecordingManager {
                 let nothing = || CapturedTake {
                     gated: Vec::new(),
                     full: Vec::new(),
+                    dropped_samples: 0,
                 };
                 let mut take = if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
                     match rec.stop_take() {
@@ -1024,11 +1034,7 @@ impl AudioRecordingManager {
 
                 // Pad if very short. Only the model's input: the kept recording
                 // stays exactly what the microphone heard.
-                let s_len = take.gated.len();
-                // debug!("Got {} samples", s_len);
-                if s_len < WHISPER_SAMPLE_RATE && s_len > 0 {
-                    take.gated.resize(WHISPER_SAMPLE_RATE * 5 / 4, 0.0);
-                }
+                pad_short_model_input(&mut take.gated);
                 Some(take)
             }
             _ => None,

@@ -37,6 +37,9 @@ pub struct CapturedTake {
     /// recording kept on disk: the gate cuts the room tone between phrases
     /// out of `gated`, and played back those cuts are jumps in the audio.
     pub full: Vec<f32>,
+    /// Device-rate samples the ring could not hold while this take ran. Both
+    /// cuts are missing them; nonzero means the take has a hole.
+    pub dropped_samples: u64,
 }
 
 // Ring capacity absorbs consumer stalls without adding latency during normal
@@ -57,18 +60,30 @@ struct CaptureTransportState {
     /// remain silent until the consumer clears the request.
     pause_acknowledged: AtomicBool,
     overrun_samples: AtomicU64,
-    /// Stretches the device itself never delivered (see `CaptureClock`).
-    device_gaps: AtomicU64,
-    device_gap_micros: AtomicU64,
+    /// Stretches the device itself never delivered (see `CaptureClock`): the
+    /// count in the top 16 bits, total microseconds in the low 48, so one
+    /// atomic swap reads and clears both together.
+    device_gap_tally: AtomicU64,
+    /// Set at each recording's start; the callback's clock drops its baseline
+    /// so a pause in delivery before the take (sleep, an idle always-on
+    /// stream) is not billed to it.
+    clock_rebase: AtomicBool,
 }
 
+const GAP_COUNT_SHIFT: u32 = 48;
+const GAP_MICROS_MASK: u64 = (1 << GAP_COUNT_SHIFT) - 1;
+
 impl CaptureTransportState {
+    fn add_device_gap(&self, missing: Duration) {
+        let micros = (missing.as_micros() as u64).min(GAP_MICROS_MASK);
+        self.device_gap_tally
+            .fetch_add((1 << GAP_COUNT_SHIFT) + micros, Ordering::Relaxed);
+    }
+
     /// Read and clear the device-gap tally: (stretches, total microseconds).
     fn take_device_gaps(&self) -> (u64, u64) {
-        (
-            self.device_gaps.swap(0, Ordering::AcqRel),
-            self.device_gap_micros.swap(0, Ordering::AcqRel),
-        )
+        let tally = self.device_gap_tally.swap(0, Ordering::AcqRel);
+        (tally >> GAP_COUNT_SHIFT, tally & GAP_MICROS_MASK)
     }
 }
 
@@ -80,7 +95,7 @@ impl CaptureTransportState {
 /// starts later than that and the audio in between is simply not there — a
 /// gap nothing downstream can see. The ring cannot lose samples without
 /// counting them; this is the other place audio can go missing, so it is
-/// counted too. Real-time safe: arithmetic and two relaxed atomics.
+/// counted too. Real-time safe: arithmetic and two atomics.
 struct CaptureClock {
     sample_rate: u32,
     /// Start of the previous block and how much audio it held.
@@ -101,6 +116,15 @@ impl CaptureClock {
         frames: usize,
         transport: &CaptureTransportState,
     ) {
+        if transport.clock_rebase.swap(false, Ordering::AcqRel) {
+            self.previous = None;
+        }
+        // cpal hands over a zero instant when the block's host time was not
+        // valid; it says nothing about where the block sits.
+        if block_start == cpal::StreamInstant::new(0, 0) {
+            self.previous = None;
+            return;
+        }
         let held = Duration::from_nanos(
             frames as u64 * 1_000_000_000 / u64::from(self.sample_rate.max(1)),
         );
@@ -111,10 +135,7 @@ impl CaptureClock {
             // Half a block of slack absorbs timestamp rounding; a dropped cycle
             // shows up as at least a whole block.
             if let Some(missing) = missing.filter(|m| *m > previous_held / 2) {
-                transport.device_gaps.fetch_add(1, Ordering::Relaxed);
-                transport
-                    .device_gap_micros
-                    .fetch_add(missing.as_micros() as u64, Ordering::Relaxed);
+                transport.add_device_gap(missing);
             }
         }
         self.previous = Some((block_start, held));
@@ -1084,6 +1105,7 @@ fn run_consumer(
                         // was idle; only active-capture loss is relevant.
                         transport.overrun_samples.store(0, Ordering::Release);
                         transport.take_device_gaps();
+                        transport.clock_rebase.store(true, Ordering::Release);
                         processor.begin_recording(policy, ready_tx);
                         recording = true;
                     }
@@ -1109,6 +1131,9 @@ fn run_consumer(
                         }
 
                         let pause_timed_out = !transport.pause_acknowledged.load(Ordering::Acquire);
+                        // Read at the pause, before blocks that belong to no
+                        // recording can add to it.
+                        let device_gaps = transport.take_device_gaps();
                         if pause_timed_out {
                             log::warn!("Timed out waiting for the microphone callback to pause");
                             // Preserve the existing recovery model: finish this
@@ -1124,10 +1149,11 @@ fn run_consumer(
                         // Include drops that raced with the pause request.
                         processor
                             .observe_overrun(transport.overrun_samples.swap(0, Ordering::AcqRel));
-                        report_device_gaps(transport.take_device_gaps());
+                        report_device_gaps(device_gaps);
                         let samples = CapturedTake {
                             gated: processor.finish_recording(),
                             full: processor.take_full_take(),
+                            dropped_samples: processor.total_dropped_samples,
                         };
                         if !pause_timed_out {
                             // Resume before stop() returns so an immediate recording

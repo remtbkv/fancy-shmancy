@@ -97,7 +97,6 @@ pub async fn retry_history_entry_transcription(
     let audio_path = history_manager.get_audio_file_path(&entry.file_name);
     let samples = crate::audio_toolkit::read_wav_samples(&audio_path)
         .map_err(|e| format!("Failed to load audio: {}", e))?;
-    let samples = crate::managers::retry_gate::gate_for_transcription(&app, samples);
 
     if samples.is_empty() {
         return Err("Recording has no audio samples".to_string());
@@ -106,10 +105,16 @@ pub async fn retry_history_entry_transcription(
     transcription_manager.initiate_model_load();
 
     let tm = Arc::clone(&transcription_manager);
-    let transcription = tauri::async_runtime::spawn_blocking(move || tm.transcribe(samples))
-        .await
-        .map_err(|e| format!("Transcription task panicked: {}", e))?
-        .map_err(|e| e.to_string())?;
+    let gate_app = app.clone();
+    let transcription = tauri::async_runtime::spawn_blocking(move || {
+        // A gate that keeps nothing hands the model nothing, which comes back
+        // as "contains no speech" below.
+        let samples = crate::managers::retry_gate::gate_for_transcription(&gate_app, samples);
+        tm.transcribe(samples)
+    })
+    .await
+    .map_err(|e| format!("Transcription task panicked: {}", e))?
+    .map_err(|e| e.to_string())?;
 
     if transcription.is_empty() {
         return Err("Recording contains no speech".to_string());
@@ -178,8 +183,8 @@ pub async fn update_recording_retention_period(
 
 /// What the recordings folder costs right now, and what an hour of dictation
 /// adds to it. The second figure is measured from the audio actually kept, not
-/// assumed from the sample format, so it reflects what this user's speech
-/// really costs after silence has been filtered out.
+/// assumed from the sample format. Recordings keep the whole take, pauses
+/// included, so an hour here is an hour of holding the key.
 #[tauri::command]
 #[specta::specta]
 pub async fn get_recording_storage_usage(
