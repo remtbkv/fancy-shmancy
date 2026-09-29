@@ -754,7 +754,8 @@ impl ShortcutAction for TranscribeAction {
 
             let stop_recording_time = Instant::now();
             if let Some(take) = rm.stop_recording_take(&binding_id, cancel_generation) {
-                // The model hears the gated audio; history keeps all of it.
+                // `gated` is now the model's input (the whole take once anyone
+                // spoke, see `model_input`); history keeps all of it.
                 let (samples, full_take) = (take.gated, take.full);
                 debug!(
                     "Recording stopped and samples retrieved in {:?}, sample count: {}",

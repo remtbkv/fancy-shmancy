@@ -5,7 +5,7 @@
 //! between phrases, which the model will happily write sentences over.
 
 use crate::audio_toolkit::vad::{VadFrame, VoiceActivityDetector, VAD_STREAMING_HANGOVER_FRAMES};
-use crate::managers::audio::pad_short_model_input;
+use crate::managers::audio::{model_input, pad_short_model_input};
 use crate::managers::model::ModelManager;
 use crate::settings::get_settings;
 use log::warn;
@@ -42,9 +42,9 @@ pub fn gate_for_transcription(app: &AppHandle, samples: Vec<f32>) -> Vec<f32> {
             if streaming {
                 vad.set_hangover_frames(VAD_STREAMING_HANGOVER_FRAMES);
             }
-            let mut gated = gate(&mut vad, &samples);
-            pad_short_model_input(&mut gated);
-            gated
+            let mut input = model_input(gate(&mut vad, &samples), &samples);
+            pad_short_model_input(&mut input);
+            input
         }
         Err(e) => {
             // Better an ungated retry than none.
@@ -135,6 +135,29 @@ mod tests {
         let mut none = gate(&mut PositiveIsSpeech, &vec![-0.5; 4 * FRAME]);
         pad_short_model_input(&mut none);
         assert!(none.is_empty());
+    }
+
+    #[test]
+    fn once_anyone_spoke_the_model_hears_the_whole_take() {
+        // 1.5 s of speech around a 1 s pause: past the bar, so the pause the
+        // gate cut goes back in and the model hears the recording as made.
+        let mut samples = vec![0.5; 25 * FRAME];
+        samples.extend(vec![-0.1; 33 * FRAME]);
+        samples.extend(vec![0.5; 25 * FRAME]);
+        assert_eq!(
+            model_input(gate(&mut PositiveIsSpeech, &samples), &samples),
+            samples
+        );
+
+        // A blip — what one gate opening on a keypress passes — is not
+        // someone speaking: the model gets only what the gate passed.
+        let mut blip = vec![-0.1; 40 * FRAME];
+        blip.extend(vec![0.5; 32 * FRAME]);
+        blip.extend(vec![-0.1; 40 * FRAME]);
+        assert_eq!(
+            model_input(gate(&mut PositiveIsSpeech, &blip), &blip),
+            vec![0.5; 32 * FRAME]
+        );
     }
 
     #[test]

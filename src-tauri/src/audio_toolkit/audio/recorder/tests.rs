@@ -586,6 +586,52 @@ fn the_kept_recording_holds_the_pauses_the_vad_cuts_from_the_model_input() {
 }
 
 #[test]
+fn the_full_feed_gets_every_frame_while_the_gated_feed_skips_the_pause() {
+    // Speech, pause, speech. The work-ahead transcribes what the model will
+    // hear at stop, which is the whole take, so it must see the pause too.
+    let frame = 480;
+    let input: Vec<f32> = (0..30 * frame)
+        .map(|i| {
+            let v = (i + 1) as f32;
+            if (10 * frame..20 * frame).contains(&i) {
+                -v
+            } else {
+                v
+            }
+        })
+        .collect();
+    let vad = VadConfig {
+        detector: Arc::new(Mutex::new(Box::new(PositiveIsSpeech))),
+        offline_hangover_frames: 0,
+        streaming_hangover_frames: 0,
+    };
+    let gated_feed = Arc::new(Mutex::new(Vec::new()));
+    let full_feed = Arc::new(Mutex::new(Vec::new()));
+    let (g, f) = (Arc::clone(&gated_feed), Arc::clone(&full_feed));
+    let mut processor = CaptureProcessor::new(
+        16_000,
+        Some(vad),
+        None,
+        Some(Arc::new(move |fr: &[f32]| {
+            g.lock().unwrap().extend_from_slice(fr)
+        })),
+        Instant::now(),
+    )
+    .with_full_audio_cb(Some(Arc::new(move |fr: &[f32]| {
+        f.lock().unwrap().extend_from_slice(fr)
+    })));
+
+    let (ready_tx, _ready_rx) = mpsc::channel();
+    processor.begin_recording(VadPolicy::Offline, ready_tx);
+    processor.process_raw_chunk(&input, ChunkDisposition::Capture);
+    processor.finish_recording();
+
+    let speech: Vec<f32> = input.iter().copied().filter(|&s| s > 0.0).collect();
+    assert_eq!(*gated_feed.lock().unwrap(), speech);
+    assert_eq!(*full_feed.lock().unwrap(), input);
+}
+
+#[test]
 fn with_the_vad_off_both_cuts_are_the_same_audio() {
     let input = ramp(10 * 480);
     let take = record_through_consumer(

@@ -248,6 +248,26 @@ pub(crate) fn pad_short_model_input(samples: &mut Vec<f32>) {
     }
 }
 
+/// More gated audio than one gate opening on a transient can pass (onset +
+/// prefill + hangover, about 1 s) means someone spoke.
+const MIN_GATED_FOR_FULL_TAKE: usize = WHISPER_SAMPLE_RATE * 3 / 2;
+
+/// What the model hears. The gate judges 30 ms frames and deletes what it
+/// rejects, so soft speech — the start of a take, a trailing last sentence —
+/// never reached the model: over the 95 takes kept whole since Sep 28 the gated
+/// audio lost 67-89 words the whole take gave back, and the whole take lost 25
+/// the gate had. Pauses cost the model nothing measurable there. So once the
+/// gate has heard someone speak, the model gets the whole take; below that it
+/// gets only what the gate passed, so a room with nobody talking still never
+/// reaches it.
+pub(crate) fn model_input(gated: Vec<f32>, full: &[f32]) -> Vec<f32> {
+    if gated.len() >= MIN_GATED_FOR_FULL_TAKE {
+        full.to_vec()
+    } else {
+        gated
+    }
+}
+
 /* ──────────────────────────────────────────────────────────────── */
 
 #[derive(Clone, Debug)]
@@ -341,15 +361,16 @@ fn create_audio_recorder(
         })
         .with_audio_callback({
             let router = stream_router;
-            let ahead = ahead_of_stop;
             let partial = partial;
             move |frame| {
                 router.feed(frame);
-                ahead.feed(frame);
-                // Third consumer: the copy on disk that outlives the process.
+                // Second consumer: the copy on disk that outlives the process.
                 partial.feed(frame);
             }
-        });
+        })
+        // The work-ahead transcribes what the model will hear at stop, which
+        // is the whole take (see `model_input`).
+        .with_full_audio_callback(move |frame| ahead_of_stop.feed(frame));
 
     Ok(recorder)
 }
@@ -1034,6 +1055,7 @@ impl AudioRecordingManager {
 
                 // Pad if very short. Only the model's input: the kept recording
                 // stays exactly what the microphone heard.
+                take.gated = model_input(std::mem::take(&mut take.gated), &take.full);
                 pad_short_model_input(&mut take.gated);
                 Some(take)
             }

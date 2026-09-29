@@ -30,8 +30,9 @@ enum Cmd {
 
 /// What one recording captured, in two cuts of the same 16 kHz audio.
 pub struct CapturedTake {
-    /// What the VAD let through: the model's input, and the only thing the
-    /// live feeds (streaming, work-ahead, safety copy) ever saw.
+    /// What the VAD let through, and the only thing the streaming preview and
+    /// safety copy ever saw. The model hears it only when it is too short to
+    /// hold speech; otherwise it hears `full` (`managers::audio::model_input`).
     pub gated: Vec<f32>,
     /// Every frame the microphone delivered, pauses included. This is the
     /// recording kept on disk: the gate cuts the room tone between phrases
@@ -190,6 +191,7 @@ pub struct AudioRecorder {
     vad: Option<VadConfig>,
     level_cb: Option<LevelCallback>,
     audio_cb: Option<AudioFrameCallback>,
+    full_audio_cb: Option<AudioFrameCallback>,
     /// Which input channel to use. None = average all (original behavior).
     selected_channel: Option<usize>,
     /// Preferred stream config cached per device name. The two HAL property
@@ -212,6 +214,7 @@ impl AudioRecorder {
             vad: None,
             level_cb: None,
             audio_cb: None,
+            full_audio_cb: None,
             selected_channel: None,
             config_cache: Arc::new(Mutex::new(None)),
             stream_error: Arc::new(AtomicBool::new(false)),
@@ -255,6 +258,17 @@ impl AudioRecorder {
         self
     }
 
+    /// Register a callback that receives every 16 kHz frame of a recording
+    /// before the VAD — the audio the full take keeps. Same rules as
+    /// `with_audio_callback`: real time, in order, on the consumer thread.
+    pub fn with_full_audio_callback<F>(mut self, cb: F) -> Self
+    where
+        F: Fn(&[f32]) + Send + Sync + 'static,
+    {
+        self.full_audio_cb = Some(Arc::new(cb));
+        self
+    }
+
     pub fn with_selected_channel(mut self, channel: Option<u16>) -> Self {
         self.set_selected_channel(channel);
         self
@@ -292,6 +306,7 @@ impl AudioRecorder {
         let level_cb = self.level_cb.clone();
         // Move the optional real-time audio frame callback into the worker thread
         let audio_cb = self.audio_cb.clone();
+        let full_audio_cb = self.full_audio_cb.clone();
         let selected_channel = self.selected_channel;
         let config_cache = Arc::clone(&self.config_cache);
         let stream_error = Arc::clone(&self.stream_error);
@@ -422,7 +437,8 @@ impl AudioRecorder {
                         level_cb,
                         audio_cb,
                         stream_running_at,
-                    );
+                    )
+                    .with_full_audio_cb(full_audio_cb);
                     run_consumer(
                         processor,
                         sample_consumer,
@@ -829,6 +845,7 @@ struct CaptureProcessor {
     vad: Option<VadConfig>,
     level_cb: Option<LevelCallback>,
     audio_cb: Option<AudioFrameCallback>,
+    full_audio_cb: Option<AudioFrameCallback>,
     stream_running_at: Instant,
     visualizer: AudioVisualiser,
     frame_resampler: FrameResampler,
@@ -881,6 +898,7 @@ impl CaptureProcessor {
             vad,
             level_cb,
             audio_cb,
+            full_audio_cb: None,
             stream_running_at,
             visualizer,
             frame_resampler,
@@ -894,6 +912,11 @@ impl CaptureProcessor {
             total_dropped_samples: 0,
             overrun_warning_logged: false,
         }
+    }
+
+    fn with_full_audio_cb(mut self, cb: Option<AudioFrameCallback>) -> Self {
+        self.full_audio_cb = cb;
+        self
     }
 
     /// Reset per-recording state and arm the first-sample acknowledgement.
@@ -972,6 +995,9 @@ impl CaptureProcessor {
         let vad_policy = self.vad_policy;
         self.frame_resampler.push(raw, |frame: &[f32]| {
             self.full_take.extend_from_slice(frame);
+            if let Some(cb) = &self.full_audio_cb {
+                cb(frame);
+            }
             handle_frame(
                 frame,
                 vad_policy,
@@ -1016,6 +1042,9 @@ impl CaptureProcessor {
         let vad_policy = self.vad_policy;
         self.frame_resampler.finish(|frame: &[f32]| {
             self.full_take.extend_from_slice(frame);
+            if let Some(cb) = &self.full_audio_cb {
+                cb(frame);
+            }
             handle_frame(
                 frame,
                 vad_policy,
