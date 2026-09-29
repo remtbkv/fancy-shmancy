@@ -36,10 +36,13 @@ struct RecordingErrorEvent {
 /// Drop guard that notifies the [`TranscriptionCoordinator`] when the
 /// transcription pipeline finishes — whether it completes normally or panics.
 /// It is also where paused playback comes back: every way this pipeline can end
-/// passes through here.
-struct FinishGuard(AppHandle);
+/// passes through here, which is also why the immediate model unload lives here:
+/// a recording that ends with no audio never reaches a transcription to unload
+/// after.
+struct FinishGuard(AppHandle, Arc<TranscriptionManager>);
 impl Drop for FinishGuard {
     fn drop(&mut self) {
+        self.1.maybe_unload_immediately("transcription session");
         media_control::resume_after_recording();
         if let Some(c) = self.0.try_state::<TranscriptionCoordinator>() {
             c.notify_processing_finished();
@@ -743,7 +746,7 @@ impl ShortcutAction for TranscribeAction {
         let cancel_generation = rm.cancel_generation();
 
         tauri::async_runtime::spawn(async move {
-            let finish_guard = FinishGuard(ah.clone());
+            let finish_guard = FinishGuard(ah.clone(), Arc::clone(&tm));
             debug!(
                 "Starting async transcription task for binding: {}",
                 binding_id
