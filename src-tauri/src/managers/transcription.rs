@@ -1437,7 +1437,7 @@ impl TranscriptionManager {
                 continue;
             };
             let samples = piece.len();
-            match self.transcribe_once(piece) {
+            match self.transcribe_piece(piece) {
                 Ok(text) => self.ahead.deliver(generation, samples, text),
                 Err(e) => {
                     warn!("Transcribing a piece of the live recording failed: {e}");
@@ -1481,17 +1481,59 @@ impl TranscriptionManager {
             pieces.len()
         );
 
+        // One piece that fails costs that piece, not the recording: a 21s
+        // silent tail once failed a 94s take three retries running, and the 72s
+        // of speech ahead of it transcribed fine every time. The gap is marked
+        // so the text doesn't read as complete when it isn't.
+        let mut first_failure = None;
         for piece in pieces {
             if piece.is_empty() {
                 continue;
             }
-            let text = self.transcribe_once(piece)?;
-            let text = text.trim();
-            if !text.is_empty() {
-                parts.push(text.to_string());
+            let secs = piece.len() as f32 / Self::SAMPLE_RATE as f32;
+            match self.transcribe_piece(piece) {
+                Ok(text) => {
+                    let text = text.trim();
+                    if !text.is_empty() {
+                        parts.push(text.to_string());
+                    }
+                }
+                Err(e) => {
+                    error!("A {secs:.1}s piece of the recording failed, keeping the rest: {e}");
+                    parts.push(LOST_AUDIO_MARKER.to_string());
+                    first_failure.get_or_insert(e);
+                }
+            }
+        }
+        if let Some(e) = first_failure {
+            if parts.iter().all(|part| part == LOST_AUDIO_MARKER) {
+                return Err(e);
             }
         }
         Ok(drop_echoed_sentence(&parts.join(" ")))
+    }
+
+    /// Transcribe one piece of a long take, gated by the rule the whole take
+    /// gets (`retry_gate::gate_for_transcription`): the whole piece if someone
+    /// speaks in it, otherwise only what the gate passed.
+    ///
+    /// The take goes to the model whole once anyone speaks in it, so a pause
+    /// long enough to fill a piece reached the model as pure room tone, and
+    /// Cohere wrote sentences over it: a 21s silent tail (flat at -50 dBFS,
+    /// "no speech" to whisper) came back as a 512-token loop about "a very
+    /// strong sense of humor", which failed the take. Asked per piece, that
+    /// tail reaches the model as the 1.2s the gate passed.
+    fn transcribe_piece(&self, piece: Vec<f32>) -> Result<String> {
+        let secs = piece.len() as f32 / Self::SAMPLE_RATE as f32;
+        let piece = crate::managers::retry_gate::gate_for_transcription(&self.app_handle, piece);
+        let heard = piece.len() as f32 / Self::SAMPLE_RATE as f32;
+        if heard < secs {
+            info!("No one speaks in a {secs:.1}s piece of the recording; the model hears the {heard:.1}s the gate passed");
+        }
+        if piece.is_empty() {
+            return Ok(String::new());
+        }
+        self.transcribe_once(piece)
     }
 
     /// Transcribe one piece of audio, with the stuck-decoder repair applied.
@@ -1764,9 +1806,7 @@ impl TranscriptionManager {
                                 model_detected_language = t.language;
                                 t.text
                             })
-                            .map_err(|e| {
-                                anyhow::anyhow!("transcribe-cpp transcription failed: {}", e)
-                            })
+                            .or_else(|e| recover_runaway_decode(session, audio, &run_options, e))
                     }
                     LoadedEngine::Parakeet(parakeet_engine) => {
                         let params = ParakeetParams {
@@ -2587,7 +2627,7 @@ pub fn get_available_accelerators() -> AvailableAccelerators {
 /// Cohere Transcribe fails the same way but silently: it emits end-of-text
 /// early and returns a transcript that simply stops partway, which reads as the
 /// tail of a long recording going missing. Its own limits are far away (a 400s
-/// encoder span, a 512-token output budget that never reported truncation
+/// encoder span, a 512-token output budget that ordinary speech never reached
 /// here), so this is the trained span, not a bound the runtime enforces.
 /// Measured on two real recordings by transcribing prefixes and comparing
 /// words per second against the same speech in short pieces: flat and complete
@@ -2692,6 +2732,108 @@ fn drop_echoed_sentence(text: &str) -> String {
         return text.to_string();
     }
     kept.join(" ")
+}
+
+/// Stands in for audio that was not transcribed: a piece of a long recording
+/// that failed, or what came after the point a decode ran out of budget.
+const LOST_AUDIO_MARKER: &str = "[…]";
+
+/// `text` followed by the marker for the audio it is missing.
+fn mark_incomplete(text: &str) -> String {
+    format!("{} {LOST_AUDIO_MARKER}", text.trim_end())
+        .trim_start()
+        .to_string()
+}
+
+/// A transcribe-cpp decode that ran out of token budget before the end of the
+/// audio used to fail the whole take, and a retry failed it again the same way:
+/// the decode is deterministic. Keep what it wrote instead, marked as
+/// incomplete.
+///
+/// Usually the budget runs out because the decoder is stuck in a loop — 512
+/// tokens is several times what Cohere's 40s pieces need, and the take this was
+/// found in came back as one sentence written thirty times. Then the loop, not
+/// the audio, is the problem: re-decode behind a little silence (what unsticks
+/// a word loop, see [`TranscriptionManager::transcribe_once`]), and if that
+/// fails too, keep what the first decode wrote up to where the loop began. A
+/// transcript with no loop in it just ran long (granite and qwen3_asr stop at
+/// 256 tokens), so re-decoding it would only hit the same budget again.
+///
+/// Any other error passes through unchanged.
+fn recover_runaway_decode(
+    session: &mut Session,
+    audio: &[f32],
+    options: &RunOptions,
+    error: transcribe_cpp::Error,
+) -> Result<String> {
+    let partial = match &error {
+        transcribe_cpp::Error::OutputTruncated { partial, .. } => {
+            partial.as_ref().map(|t| t.text.clone()).unwrap_or_default()
+        }
+        _ => {
+            return Err(anyhow::anyhow!(
+                "transcribe-cpp transcription failed: {}",
+                error
+            ))
+        }
+    };
+
+    let Some(before_loop) = cut_runaway_loop(&partial) else {
+        warn!("Decoder ran out of token budget before the end of the audio, keeping what it wrote: {partial}");
+        return Ok(mark_incomplete(&partial));
+    };
+    warn!("Decoder looped until its token budget ran out, re-decoding: {partial}");
+
+    let mut shifted = vec![0.0; TranscriptionManager::REDECODE_LEAD_SILENCE];
+    shifted.extend_from_slice(audio);
+    match session.run(&shifted, options) {
+        Ok(second) => {
+            info!("Re-decoding behind silence finished cleanly");
+            return Ok(second.text);
+        }
+        Err(e) => warn!("Re-decoding behind silence failed too, cutting the loop: {e}"),
+    }
+    info!("Kept what the decoder wrote before it looped: {before_loop}");
+    Ok(mark_incomplete(&before_loop))
+}
+
+/// A loop has to repeat at least this many times, back to back, to be cut.
+const RUNAWAY_LOOP_MIN_COPIES: usize = 3;
+
+/// The longest loop looked for, in words. A decoder that loops repeats a word,
+/// a phrase or a sentence; nothing it was seen doing came close to this.
+const RUNAWAY_LOOP_MAX_WORDS: usize = 60;
+
+/// `text` up to and including the first copy of the loop it ends in, or `None`
+/// when it doesn't end in one. The loop is whatever block of words repeats
+/// back to back up to the very end (the budget usually cuts the last copy
+/// short); of the blocks that do, the one that leaves the least behind wins, so
+/// "A B A B A B" keeps "A B", not "A B A B". Words are split on whitespace, so
+/// a language written without spaces is never cut.
+fn cut_runaway_loop(text: &str) -> Option<String> {
+    let words = words_with_offsets(text);
+    let bare: Vec<String> = words.iter().map(|(_, w)| bare_word(w)).collect();
+    let n = bare.len();
+
+    let mut cut: Option<usize> = None;
+    for period in 1..=RUNAWAY_LOOP_MAX_WORDS.min(n / RUNAWAY_LOOP_MIN_COPIES) {
+        // Walk back from the end while every word matches the one a period
+        // earlier; what's left is the stretch that repeats with this period.
+        let mut k = n;
+        while k > period && bare[k - 1] == bare[k - 1 - period] {
+            k -= 1;
+        }
+        let loop_start = k - period;
+        let end = loop_start + period;
+        // A run of bare punctuation ("... ... ...") is not a loop of words.
+        let has_words = bare[loop_start..end].iter().any(|w| !w.is_empty());
+        if has_words && n - loop_start >= RUNAWAY_LOOP_MIN_COPIES * period {
+            cut = Some(cut.map_or(end, |c: usize| c.min(end)));
+        }
+    }
+
+    let end = cut?;
+    Some(text[..words[end].0].trim_end().to_string())
 }
 
 /// How many copies of a word in a row stop being speech. Two is ordinary —
@@ -3102,6 +3244,57 @@ mod tests {
             drop_echoed_sentence(echoed),
             "This is the one long sentence that the decoder got stuck on, over and over."
         );
+    }
+
+    #[test]
+    fn a_runaway_phrase_loop_is_cut_to_one_copy() {
+        let looped = "I said hello and then and then and then and then and";
+        assert_eq!(
+            cut_runaway_loop(looped).as_deref(),
+            Some("I said hello and then")
+        );
+    }
+
+    #[test]
+    fn a_runaway_sentence_loop_keeps_its_punctuation() {
+        let looped = "Hold on. Thank you. Thank you. Thank you. Thank";
+        assert_eq!(
+            cut_runaway_loop(looped).as_deref(),
+            Some("Hold on. Thank you.")
+        );
+    }
+
+    #[test]
+    fn a_runaway_word_loop_is_cut_to_one_copy() {
+        assert_eq!(
+            cut_runaway_loop("okay so the the the the").as_deref(),
+            Some("okay so the")
+        );
+    }
+
+    #[test]
+    fn a_runaway_loop_keeps_its_shortest_repeating_block() {
+        assert_eq!(
+            cut_runaway_loop("go A B A B A B A B").as_deref(),
+            Some("go A B")
+        );
+    }
+
+    #[test]
+    fn a_transcript_that_just_ran_long_has_no_loop_to_cut() {
+        let said = "This is fine and it just ran long. We went there, we went there";
+        assert_eq!(cut_runaway_loop(said), None);
+        assert_eq!(cut_runaway_loop(""), None);
+        assert_eq!(cut_runaway_loop("So... ... ... ..."), None);
+    }
+
+    #[test]
+    fn a_cut_transcript_is_marked_incomplete() {
+        assert_eq!(
+            mark_incomplete("Hold on. Thank you. "),
+            "Hold on. Thank you. […]"
+        );
+        assert_eq!(mark_incomplete(""), "[…]");
     }
 
     #[test]
