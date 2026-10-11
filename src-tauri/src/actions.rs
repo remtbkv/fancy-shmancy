@@ -650,8 +650,9 @@ impl ShortcutAction for TranscribeAction {
             // Only once the microphone is actually live: a start that failed has
             // nothing to protect, and silencing the user's music for it would be
             // a mystery.
+            let media_session = media_control::begin_recording();
             if quiet_ms == 0 {
-                media_control::pause_for_recording(app);
+                media_control::pause_for_recording(app, media_session);
             } else {
                 // The guard still has this recording in question. Show up only
                 // if it is still running once the grace window closes.
@@ -665,7 +666,7 @@ impl ShortcutAction for TranscribeAction {
                     }
                     overlay_intent.show(&app_clone);
                     set_tray_state(&app_clone, TrayIconState::Recording);
-                    media_control::pause_for_recording(&app_clone);
+                    media_control::pause_for_recording(&app_clone, media_session);
                 });
             }
             // Windows of this recording get transcribed as they complete, so

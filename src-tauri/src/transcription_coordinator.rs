@@ -23,6 +23,13 @@ const DOUBLE_TAP_WINDOW: Duration = Duration::from_millis(400);
 /// swallowed genuinely fast double taps, which then ran as one short recording
 /// and went straight to transcribing.
 const MIN_TAP_GAP: Duration = Duration::from_millis(10);
+/// A press that would end a recording turned on less than this long ago is an
+/// accidental extra click — a double click on a toggle shortcut, a third tap
+/// after a double-tap latch — and the recording stays on. Nobody means to
+/// record for under half a second, and stopping one that short used to pause
+/// the music and start it again in the same breath. Matches macOS's default
+/// double-click interval.
+const ACCIDENTAL_STOP_WINDOW: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PttAction {
@@ -160,6 +167,12 @@ fn ends_another_recording(
     is_pressed && recording_binding.is_some_and(|recording| recording != binding_id)
 }
 
+/// Whether a stop press arriving `at` came too soon after the recording was
+/// turned on to be meant (see [`ACCIDENTAL_STOP_WINDOW`]).
+fn is_accidental_stop(turned_on_at: Option<Instant>, at: Instant) -> bool {
+    turned_on_at.is_some_and(|on| at.saturating_duration_since(on) < ACCIDENTAL_STOP_WINDOW)
+}
+
 /// Serialises all transcription lifecycle events through a single thread
 /// to eliminate race conditions between keyboard shortcuts, signals, and
 /// the async transcribe-paste pipeline.
@@ -191,6 +204,10 @@ impl TranscriptionCoordinator {
                 // measure hold length) and whether recording is latched on.
                 let mut press_started: Option<(String, Instant)> = None;
                 let mut locked = false;
+                // When the recording was last switched on by a toggle press or
+                // a double-tap latch — what an accidental extra click is
+                // measured against.
+                let mut turned_on_at: Option<Instant> = None;
 
                 loop {
                     let cmd = if let Some(pending) = &pending_release {
@@ -277,6 +294,7 @@ impl TranscriptionCoordinator {
                                         pending_tap.map(|(_, gap)| gap.as_millis()).unwrap_or(0);
                                     pending_release = None;
                                     locked = true;
+                                    turned_on_at = Some(at);
                                     // Hands-free from here: nothing is being
                                     // held, so nothing can turn out to have
                                     // been an editing chord.
@@ -296,6 +314,12 @@ impl TranscriptionCoordinator {
                                     // while dictating — worth it, because being
                                     // able to throw away a hands-free recording
                                     // matters more than passing Escape through.
+                                    continue;
+                                }
+                                LockAction::Stop if is_accidental_stop(turned_on_at, at) => {
+                                    debug!(
+                                        "Press for '{binding_id}' came right after the latch; treating it as an accidental extra tap"
+                                    );
                                     continue;
                                 }
                                 LockAction::Stop => {
@@ -414,6 +438,15 @@ impl TranscriptionCoordinator {
                                         // Nothing is being held, so no hold can
                                         // turn out to have been an editing chord.
                                         start(&app, &mut stage, &binding_id, &hotkey_string, false);
+                                        turned_on_at = Some(at);
+                                    }
+                                    Stage::Recording(id)
+                                        if id == &binding_id
+                                            && is_accidental_stop(turned_on_at, at) =>
+                                    {
+                                        debug!(
+                                            "Press for '{binding_id}' came right after it turned recording on; treating it as an accidental double click"
+                                        );
                                     }
                                     Stage::Recording(id) if id == &binding_id => {
                                         stop(&app, &mut stage, &binding_id, &hotkey_string);
@@ -981,6 +1014,8 @@ mod tests {
         /// (tap_candidate, released_at, deadline)
         pending: Option<(bool, u64, u64)>,
         last_press: Option<u64>,
+        turned_on_at: Option<u64>,
+        base: Instant,
         starts: u32,
         stops: u32,
     }
@@ -999,6 +1034,8 @@ mod tests {
                 press_started: None,
                 pending: None,
                 last_press: None,
+                turned_on_at: None,
+                base: Instant::now(),
                 starts: 0,
                 stops: 0,
             }
@@ -1057,6 +1094,16 @@ mod tests {
                 LockAction::Engage => {
                     self.pending = None;
                     self.locked = true;
+                    self.turned_on_at = Some(at);
+                    return;
+                }
+                LockAction::Stop
+                    if is_accidental_stop(
+                        self.turned_on_at
+                            .map(|on| self.base + Duration::from_millis(on)),
+                        self.base + Duration::from_millis(at),
+                    ) =>
+                {
                     return;
                 }
                 LockAction::Stop => {
@@ -1259,6 +1306,57 @@ mod tests {
         sim.run(&[LEv::Press, LEv::Wait(90), LEv::Release, LEv::Wait(60)]);
         assert_eq!(sim.starts, 1);
         assert_eq!(sim.stops, 1);
+        assert!(!sim.locked);
+    }
+
+    /// A double click on a toggle shortcut: the second click lands well inside
+    /// the window and must not end the recording the first one started.
+    #[test]
+    fn a_second_click_right_after_turning_on_is_accidental() {
+        let on = Instant::now();
+        assert!(is_accidental_stop(
+            Some(on),
+            on + Duration::from_millis(120)
+        ));
+        assert!(is_accidental_stop(
+            Some(on),
+            on + Duration::from_millis(450)
+        ));
+    }
+
+    #[test]
+    fn a_click_after_the_window_stops_as_usual() {
+        let on = Instant::now();
+        assert!(!is_accidental_stop(Some(on), on + ACCIDENTAL_STOP_WINDOW));
+        assert!(!is_accidental_stop(Some(on), on + Duration::from_secs(5)));
+        assert!(!is_accidental_stop(None, on));
+    }
+
+    /// Tap, tap, tap in a burst: the third tap lands right after the latch and
+    /// is an extra tap, not a stop. A later press still stops it.
+    #[test]
+    fn a_third_tap_right_after_the_latch_keeps_recording() {
+        let mut sim = LockSim::new(true);
+        sim.run(&[
+            LEv::Press,
+            LEv::Wait(80),
+            LEv::Release,
+            LEv::Wait(90),
+            LEv::Press, // latches
+            LEv::Wait(70),
+            LEv::Release,
+            LEv::Wait(90),
+            LEv::Press, // 160 ms after the latch
+            LEv::Wait(70),
+            LEv::Release,
+            LEv::Wait(2_000),
+        ]);
+        assert!(sim.locked, "the extra tap must not unlatch");
+        assert_eq!((sim.starts, sim.stops), (1, 0));
+        assert_eq!(sim.stage, SimStage::Recording);
+
+        sim.run(&[LEv::Press, LEv::Wait(60), LEv::Release, LEv::Wait(1_000)]);
+        assert_eq!(sim.stops, 1, "a deliberate press still stops it");
         assert!(!sim.locked);
     }
 }

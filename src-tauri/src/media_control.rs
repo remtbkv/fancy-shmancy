@@ -20,6 +20,7 @@
 use crate::settings::get_settings;
 use log::{debug, warn};
 use once_cell::sync::Lazy;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
@@ -128,8 +129,44 @@ fn players_making_noise(processes: &[AudioProcess], own_pid: i32) -> Vec<Player>
 }
 
 enum Job {
-    Pause(AppHandle),
-    Resume,
+    Pause(AppHandle, u64),
+    Resume(u64),
+}
+
+/// Numbers each recording, so a pause can be matched to the recording that
+/// asked for it. A pause can be sent late — after the editing-key grace window,
+/// from its own thread — and one that arrives after its recording has already
+/// ended would silence the music with nothing left to start it again.
+static SESSION: AtomicU64 = AtomicU64::new(0);
+
+/// Marks the start of a recording. Pass the returned number to
+/// [`pause_for_recording`].
+pub fn begin_recording() -> u64 {
+    SESSION.fetch_add(1, Ordering::SeqCst) + 1
+}
+
+/// What the worker does with each job, kept apart from the AppleScript so the
+/// ordering rules can be tested without a player.
+#[derive(Debug, Default)]
+struct Ledger {
+    /// Every recording up to this one has ended.
+    ended_through: u64,
+    paused: Vec<Player>,
+}
+
+impl Ledger {
+    /// Whether a pause for `session` should go ahead: its recording must still
+    /// be running, and nothing may already be paused.
+    fn should_pause(&self, session: u64) -> bool {
+        session > self.ended_through && self.paused.is_empty()
+    }
+
+    /// The recording `session` (and every one before it) is over; returns the
+    /// players to start again.
+    fn end(&mut self, session: u64) -> Vec<Player> {
+        self.ended_through = self.ended_through.max(session);
+        std::mem::take(&mut self.paused)
+    }
 }
 
 /// One worker thread, so a pause and the resume that follows it can never run
@@ -140,13 +177,17 @@ static JOBS: Lazy<Sender<Job>> = Lazy::new(|| {
     std::thread::Builder::new()
         .name("media-control".into())
         .spawn(move || {
-            let mut paused: Vec<Player> = Vec::new();
+            let mut ledger = Ledger::default();
             for job in rx {
                 match job {
-                    Job::Pause(app) if paused.is_empty() => paused = pause_now(&app),
-                    Job::Pause(_) => {}
-                    Job::Resume => {
-                        for player in paused.drain(..) {
+                    Job::Pause(app, session) if ledger.should_pause(session) => {
+                        ledger.paused = pause_now(&app)
+                    }
+                    Job::Pause(_, session) => {
+                        debug!("Skipping the pause for recording {session}: already paused or over")
+                    }
+                    Job::Resume(session) => {
+                        for player in ledger.end(session) {
                             resume_player(player);
                         }
                     }
@@ -157,12 +198,14 @@ static JOBS: Lazy<Sender<Job>> = Lazy::new(|| {
     tx
 });
 
-pub fn pause_for_recording(app: &AppHandle) {
-    let _ = JOBS.send(Job::Pause(app.clone()));
+pub fn pause_for_recording(app: &AppHandle, session: u64) {
+    let _ = JOBS.send(Job::Pause(app.clone(), session));
 }
 
+/// Ends the most recent recording. A new recording cannot start until the last
+/// one has called this, so the latest session number is always the right one.
 pub fn resume_after_recording() {
-    let _ = JOBS.send(Job::Resume);
+    let _ = JOBS.send(Job::Resume(SESSION.load(Ordering::SeqCst)));
 }
 
 fn pause_now(app: &AppHandle) -> Vec<Player> {
@@ -209,14 +252,14 @@ fn pause_player(player: Player) -> bool {
     }
 }
 
-/// The mirror image: start it again unless the user already did.
+/// The mirror image. No check of the play state first: a player keeps
+/// reporting "playing" for a moment after it was told to pause (Spotify,
+/// measured 2026-10-11: still "playing" straight after `pause`, "paused" by
+/// 100 ms), so a recording short enough — a double click — read the stale
+/// state and left the music off. `play` on a player that is already playing
+/// does nothing, so asking first bought nothing.
 fn resume_player(player: Player) {
-    let script = format!(
-        r#"tell application id "{}"
-            if player state is not playing then play
-        end tell"#,
-        player.bundle_id()
-    );
+    let script = format!(r#"tell application id "{}" to play"#, player.bundle_id());
     if run_script(&script).is_none() {
         warn!("Could not resume {player:?} after the recording");
     }
@@ -556,5 +599,43 @@ mod tests {
             process(100, "com.pais.handy", true),
         ];
         assert!(players_making_noise(&processes, 99).is_empty());
+    }
+
+    /// The order a double click produces: the recording is over before its
+    /// pause has run. The resume must still find the player it paused.
+    #[test]
+    fn a_resume_starts_what_its_recording_paused() {
+        let mut ledger = Ledger::default();
+        assert!(ledger.should_pause(1));
+        ledger.paused = vec![Player::Spotify];
+        assert_eq!(ledger.end(1), vec![Player::Spotify]);
+        assert!(ledger.paused.is_empty());
+    }
+
+    /// A pause sent late — after the editing-key grace window — for a recording
+    /// that has already ended would leave the music off for good.
+    #[test]
+    fn a_pause_for_a_recording_that_already_ended_is_dropped() {
+        let mut ledger = Ledger::default();
+        assert!(ledger.end(1).is_empty());
+        assert!(!ledger.should_pause(1));
+        assert!(ledger.should_pause(2), "the next recording still pauses");
+    }
+
+    /// While something is already paused a second pause has nothing to add,
+    /// and must not lose track of what the first one paused.
+    #[test]
+    fn a_second_pause_while_paused_is_a_no_op() {
+        let mut ledger = Ledger::default();
+        ledger.paused = vec![Player::Music];
+        assert!(!ledger.should_pause(1));
+        assert_eq!(ledger.end(1), vec![Player::Music]);
+    }
+
+    #[test]
+    fn recordings_are_numbered_in_order() {
+        let first = begin_recording();
+        let second = begin_recording();
+        assert!(second > first);
     }
 }
