@@ -30,6 +30,9 @@ const SCRIPT_POLL: Duration = Duration::from_millis(50);
 /// AppleScript talks to another app over Apple events, which can sit waiting on
 /// a permission prompt. Nothing here is worth blocking the resume behind.
 const SCRIPT_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long a player's reported state lags a play or pause we sent it, with
+/// margin (Spotify: about 100 ms).
+const STATE_SETTLE: Duration = Duration::from_secs(1);
 
 /// A process CoreAudio knows about, and whether it is feeding the output device
 /// right now.
@@ -178,10 +181,16 @@ static JOBS: Lazy<Sender<Job>> = Lazy::new(|| {
         .name("media-control".into())
         .spawn(move || {
             let mut ledger = Ledger::default();
+            // When we last started a player again: for a moment after that it
+            // still reports "paused", and a pause that believed it would leave
+            // the music playing over the next recording.
+            let mut last_resume: Option<Instant> = None;
             for job in rx {
                 match job {
                     Job::Pause(app, session) if ledger.should_pause(session) => {
-                        ledger.paused = pause_now(&app)
+                        let just_resumed =
+                            last_resume.is_some_and(|at| at.elapsed() < STATE_SETTLE);
+                        ledger.paused = pause_now(&app, just_resumed)
                     }
                     Job::Pause(_, session) => {
                         debug!("Skipping the pause for recording {session}: already paused or over")
@@ -189,6 +198,7 @@ static JOBS: Lazy<Sender<Job>> = Lazy::new(|| {
                     Job::Resume(session) => {
                         for player in ledger.end(session) {
                             resume_player(player);
+                            last_resume = Some(Instant::now());
                         }
                     }
                 }
@@ -208,7 +218,7 @@ pub fn resume_after_recording() {
     let _ = JOBS.send(Job::Resume(SESSION.load(Ordering::SeqCst)));
 }
 
-fn pause_now(app: &AppHandle) -> Vec<Player> {
+fn pause_now(app: &AppHandle, just_resumed: bool) -> Vec<Player> {
     if !get_settings(app).pause_playback_while_recording {
         return Vec::new();
     }
@@ -220,7 +230,7 @@ fn pause_now(app: &AppHandle) -> Vec<Player> {
     let players = players_making_noise(&audio_processes(), std::process::id() as i32);
     let paused: Vec<Player> = players
         .into_iter()
-        .filter(|player| pause_player(*player))
+        .filter(|player| pause_player(*player, just_resumed))
         .collect();
     if !paused.is_empty() {
         debug!("Paused {paused:?} for the recording");
@@ -232,9 +242,21 @@ fn pause_now(app: &AppHandle) -> Vec<Player> {
 /// player whose stream is still open after the user stopped it themselves
 /// answers "no" here, which is how a recording avoids starting music that was
 /// meant to be off.
-fn pause_player(player: Player) -> bool {
+///
+/// Right after we started it again (`just_resumed`) the player still reports
+/// "paused" for a moment, so it is given that moment to catch up first.
+fn pause_player(player: Player, just_resumed: bool) -> bool {
+    let wait_for_playing = if just_resumed {
+        r#"repeat 10 times
+                if player state is playing then exit repeat
+                delay 0.05
+            end repeat"#
+    } else {
+        ""
+    };
     let script = format!(
         r#"tell application id "{}"
+            {wait_for_playing}
             if player state is playing then
                 pause
                 return "paused"
@@ -252,16 +274,35 @@ fn pause_player(player: Player) -> bool {
     }
 }
 
-/// The mirror image. No check of the play state first: a player keeps
-/// reporting "playing" for a moment after it was told to pause (Spotify,
-/// measured 2026-10-11: still "playing" straight after `pause`, "paused" by
-/// 100 ms), so a recording short enough — a double click — read the stale
-/// state and left the music off. `play` on a player that is already playing
-/// does nothing, so asking first bought nothing.
+/// The mirror image. A player keeps reporting "playing" for a moment after it
+/// was told to pause (Spotify, measured 2026-10-11: still "playing" straight
+/// after `pause`, "paused" by 100 ms), and a `play` that lands while it still
+/// thinks it is playing can be taken as a no-op — a double click's recording
+/// is short enough to land there. So: wait for the pause to settle, play, and
+/// check it took, once more if it did not.
 fn resume_player(player: Player) {
-    let script = format!(r#"tell application id "{}" to play"#, player.bundle_id());
-    if run_script(&script).is_none() {
-        warn!("Could not resume {player:?} after the recording");
+    let script = format!(
+        r#"tell application id "{}"
+            repeat 20 times
+                if player state is not playing then exit repeat
+                delay 0.05
+            end repeat
+            play
+            repeat 2 times
+                repeat 10 times
+                    if player state is playing then return "playing"
+                    delay 0.05
+                end repeat
+                play
+            end repeat
+            return player state as string
+        end tell"#,
+        player.bundle_id()
+    );
+    match run_script(&script) {
+        Some(state) if state.trim() == "playing" => debug!("Resumed {player:?}"),
+        Some(state) => warn!("Asked {player:?} to resume; it says {}", state.trim()),
+        None => warn!("Could not resume {player:?} after the recording"),
     }
 }
 
