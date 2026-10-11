@@ -25,11 +25,10 @@ const DOUBLE_TAP_WINDOW: Duration = Duration::from_millis(400);
 const MIN_TAP_GAP: Duration = Duration::from_millis(10);
 /// A press that would end a recording turned on less than this long ago is an
 /// accidental extra click — a double click on a toggle shortcut, a third tap
-/// after a double-tap latch — and the recording stays on. Nobody means to
-/// record for under half a second, and stopping one that short used to pause
-/// the music and start it again in the same breath. Matches macOS's default
-/// double-click interval.
-const ACCIDENTAL_STOP_WINDOW: Duration = Duration::from_millis(500);
+/// after a double-tap latch — and the recording stays on. Kept short: a
+/// deliberate on-then-off double click (Rem, 2026-10-11: 500 ms swallowed it)
+/// lands just past this and still stops.
+const ACCIDENTAL_STOP_WINDOW: Duration = Duration::from_millis(200);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PttAction {
@@ -1320,13 +1319,17 @@ mod tests {
         ));
         assert!(is_accidental_stop(
             Some(on),
-            on + Duration::from_millis(450)
+            on + Duration::from_millis(190)
         ));
     }
 
     #[test]
     fn a_click_after_the_window_stops_as_usual() {
         let on = Instant::now();
+        assert!(!is_accidental_stop(
+            Some(on),
+            on + Duration::from_millis(300)
+        ));
         assert!(!is_accidental_stop(Some(on), on + ACCIDENTAL_STOP_WINDOW));
         assert!(!is_accidental_stop(Some(on), on + Duration::from_secs(5)));
         assert!(!is_accidental_stop(None, on));
